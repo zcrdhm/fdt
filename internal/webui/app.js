@@ -518,31 +518,16 @@
     try {
       const fields = collectUserFields();
       const files = selectedFiles;
-      let r;
-      if (files && files.length > 0) {
-        const fd = new FormData();
-        Object.keys(fields).forEach((k) => fd.append(k, fields[k]));
-        for (const f of files) fd.append('files', f, f.webkitRelativePath || f.name);
-        r = await fetch('/requests', {
-          method: 'POST', body: fd, credentials: 'same-origin',
-          headers: { 'X-Requested-With': 'XMLHttpRequest', Accept: 'application/json' },
-        });
-      } else {
-        r = await fetch('/requests', {
-          method: 'POST', credentials: 'same-origin',
-          headers: {
-            'content-type': 'application/json',
-            'X-Requested-With': 'XMLHttpRequest',
-            Accept: 'application/json',
-          },
-          body: JSON.stringify({
-            fields: fields,
-            reason: fields.reason,
-            cls: fields.cls,
-            sourceDir: $('srcdir').value,
-          }),
-        });
+      if (!files || !files.length) {
+        throw new Error('请先选择要导出的文件');
       }
+      const fd = new FormData();
+      Object.keys(fields).forEach((k) => fd.append(k, fields[k]));
+      for (const f of files) fd.append('files', f, f.webkitRelativePath || f.name);
+      const r = await fetch('/requests', {
+        method: 'POST', body: fd, credentials: 'same-origin',
+        headers: { 'X-Requested-With': 'XMLHttpRequest', Accept: 'application/json' },
+      });
       const text = await r.text();
       let d = null;
       try { d = text ? JSON.parse(text) : null; } catch (_) { d = text; }
