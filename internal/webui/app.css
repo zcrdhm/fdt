@@ -31,6 +31,13 @@ a { color: var(--accent); }
   display: flex; align-items: flex-start; justify-content: space-between;
   gap: 16px; margin-bottom: 22px; flex-wrap: wrap;
 }
+.brand-row { display: flex; align-items: flex-start; gap: 14px; }
+.brand-logo {
+  flex-shrink: 0; width: 48px; height: 48px; border-radius: 12px;
+  background: #fff; object-fit: contain;
+  box-shadow: 0 4px 14px rgba(0,0,0,.28);
+}
+.login-brand { display: flex; justify-content: center; margin: 4px 0 14px; }
 .brand h1 {
   margin: 0; font-size: 26px; font-weight: 600; letter-spacing: -0.02em;
 }

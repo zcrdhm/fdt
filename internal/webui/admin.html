@@ -4,11 +4,16 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>FDT Portal 管理后台</title>
+  <link rel="icon" href="/favicon.ico" type="image/x-icon" />
+  <link rel="apple-touch-icon" href="/logo.png" />
   <link rel="stylesheet" href="/app.css" />
 </head>
 <body>
   <div class="wrap wrap-wide">
     <section id="view-login" class="login-card card">
+      <div class="login-brand">
+        <img class="brand-logo" src="/logo.png" width="48" height="48" alt="FDT" />
+      </div>
       <div class="role-switch" role="tablist" aria-label="登录身份">
         <a class="role-btn" href="/">用户</a>
         <a class="role-btn on" href="/admin/" aria-current="page">管理员</a>
@@ -28,8 +33,13 @@
     <section id="view-app" class="hidden">
       <div class="top">
         <div class="brand">
-          <h1>FDT 管理后台</h1>
-          <p>全部记录 · 表单字段 · LDAP · 改密。</p>
+          <div class="brand-row">
+            <img class="brand-logo" src="/logo.png" width="48" height="48" alt="" />
+            <div>
+              <h1>FDT 管理后台</h1>
+              <p>全部记录 · 表单字段 · LDAP · 改密。</p>
+            </div>
+          </div>
         </div>
         <div class="nav">
           <button type="button" class="ghost" id="btn-tab-imports">获取导入</button>

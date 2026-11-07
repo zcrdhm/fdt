@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -128,5 +129,26 @@ func TestSingleTenantConvenience(t *testing.T) {
 	q2, err := svc.PollQR2(ctx, sub.ReqID)
 	if err != nil || q2.QR2Frame == "" {
 		t.Fatalf("single-tenant QR#2 not minted: %v %v", q2, err)
+	}
+}
+
+func TestSubmitRejectsExpiredSubscription(t *testing.T) {
+	ctx := context.Background()
+	k := newTenantKeys(t)
+	fs := feishu.NewMockClient(true, "auto")
+	svc := New(5 * time.Minute)
+	if err := svc.AddTenant("acme", TenantConfig{
+		InternalPub: k.intKP.Pub, Signer: k.gwSig, Feishu: fs,
+		ExpiresAt: time.Now().Add(-time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	frame := signQR1(t, k.intSig, "acme", "req-expired")
+	if _, err := svc.SubmitQR1(ctx, frame, ""); !errors.Is(err, ErrSubscriptionExpired) {
+		t.Fatalf("want ErrSubscriptionExpired, got %v", err)
+	}
+	st := svc.LookupSubscription("")
+	if !st.Expired || st.Tenant != "acme" {
+		t.Fatalf("lookup = %+v", st)
 	}
 }

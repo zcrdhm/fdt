@@ -326,7 +326,7 @@ func installATM(opt Options, lay Layout) error {
 	if secret == "" {
 		secret = "dev-secret"
 	}
-	base := strings.TrimRight(opt.Gateway, "/")
+	base := atmDataPlaneBase(opt.Gateway)
 	// Co-located with intranet (default FHS or same host): share the portal DB
 	// so QR#2 redeem can Claim/Consume tokens. Separate ATM hosts should mount
 	// or replicate that DB, or keep DATA_DIR local only for import-side tests.
@@ -339,18 +339,12 @@ func installATM(opt Options, lay Layout) error {
 	usbDir := filepath.Join(lay.Var, "usb") // only used when USB=mock
 	_ = os.MkdirAll(usbDir, 0o755)
 	_ = os.MkdirAll("/mnt/fdt-usb", 0o755)
-	env := envMap{
-		"ROLE": "atm", "DATA_DIR": dataDir, "KEYS_DIR": lay.Keys,
-		"DEVICE_ID": opt.DeviceID, "DEVICE_SECRET": secret,
-		"DATA_URL": base + "/data", "IMPORT_URL": base + "/import",
-		"USB": "sysfs", "USB_MOUNT": "/mnt/fdt-usb", "USB_DIR": usbDir,
-		"SCANNER": "", "CAMERA": "/dev/video0",
-		"ATM_UI_LISTEN": "0.0.0.0:9080",
-		"ATM_MAINT_PASSWORD": "fdt-maint",
-		"ATM_MAINT_PASSWORD_FILE": filepath.Join(lay.Var, "atm_maint_password"),
-		"ATM_IMPORT_FIELDS": filepath.Join(lay.Etc, "import-fields.json"),
-	}
-	if err := writeEnv(lay.EnvFile, env); err != nil {
+	if err := writeATMEnvFile(lay.EnvFile, atmEnvParams{
+		DataDir: dataDir, KeysDir: lay.Keys, DeviceID: opt.DeviceID, DeviceSecret: secret,
+		DataURL: base + "/data", ImportURL: base + "/import",
+		USBDir: usbDir, ImportFields: filepath.Join(lay.Etc, "import-fields.json"),
+		MaintPassFile: filepath.Join(lay.Var, "atm_maint_password"),
+	}); err != nil {
 		return err
 	}
 	if err := writeATMImportFieldsExample(filepath.Join(lay.Etc, "import-fields.json")); err != nil {
@@ -379,12 +373,12 @@ case "$UI" in
   */) UI="${UI}?kiosk=1&run=1" ;;
   *) UI="${UI}/?kiosk=1&run=1" ;;
 esac
-# start ATM API/UI if not already up
+# start ATM API/UI if not already up (-k：自签 HTTPS 亦可探测)
 BASE=$(printf '%s' "$UI" | sed 's/[?#].*//')
-if ! curl -sf -o /dev/null "$BASE"; then
+if ! curl -skf -o /dev/null "$BASE"; then
   nohup "` + lay.Bin + `" atm -env "` + lay.EnvFile + `" -ui >/tmp/fdt-atm-ui.log 2>&1 &
   for i in 1 2 3 4 5 6 7 8 9 10; do
-    curl -sf -o /dev/null "$BASE" && break
+    curl -skf -o /dev/null "$BASE" && break
     sleep 0.4
   done
 fi
@@ -413,8 +407,9 @@ exec "$CHROME" --kiosk --app="$UI" --user-data-dir="$PROFILE" \
 	fmt.Println("✅ ATM 一键安装完成")
 	fmt.Printf("  配置: %s\n", lay.EnvFile)
 	fmt.Println("  USB:       sysfs 真机检测；插入后自动挂到 /mnt/fdt-usb（需权限或 udisks）")
-	fmt.Println("  网页界面:  " + uiHelper + "   →  http://127.0.0.1:9080/")
-	fmt.Println("  触屏锁屏:  " + kioskHelper + "   （Chromium --kiosk，配合页内锁键）")
+	fmt.Println("  网页界面:  " + uiHelper + "   →  http://127.0.0.1:9080/（可改 ATM_UI_LISTEN / ATM_UI_TLS）")
+	fmt.Println("  触屏锁屏:  " + kioskHelper + "   （Chromium --kiosk；ATM_UI_URL 与 UI 协议端口一致）")
+	fmt.Println("  Portal 数据: DATA_URL/IMPORT_URL → 内网 :8081（与 ATM UI 端口无关）")
 	fmt.Println("  维护密码:  fdt-maint（可在 UI 维护模式改密，或改 fdt.env 中 ATM_MAINT_PASSWORD）")
 	fmt.Println("  导出兑付:  " + helper + " -qr2 'FDT1....'")
 	fmt.Println("  摄像头扫:  " + helper + " -camera /dev/video0")
@@ -638,6 +633,105 @@ func writeATMImportFieldsExample(path string) error {
 	return os.WriteFile(path, []byte(body), 0o644)
 }
 
+type atmEnvParams struct {
+	DataDir, KeysDir, DeviceID, DeviceSecret string
+	DataURL, ImportURL                       string
+	USBDir, ImportFields, MaintPassFile      string
+}
+
+// writeATMEnvFile writes /etc/.../fdt.env with Chinese comments for UI port / TLS.
+func writeATMEnvFile(path string, p atmEnvParams) error {
+	certEx := filepath.Join(p.KeysDir, "server.pem")
+	keyEx := filepath.Join(p.KeysDir, "server.key")
+	body := `# FDT ATM 配置 — 修改后重启: fdt atm -env ` + path + ` -ui
+#
+# 分层说明：
+#   · ATM 触屏/网页 UI  ← ATM_UI_LISTEN / ATM_UI_TLS（可改 80、443）
+#   · Portal 数据口     ← DATA_URL / IMPORT_URL（固定连内网 :8081，与 UI 端口无关）
+
+ROLE=atm
+DATA_DIR=` + p.DataDir + `
+KEYS_DIR=` + p.KeysDir + `
+DEVICE_ID=` + p.DeviceID + `
+DEVICE_SECRET=` + p.DeviceSecret + `
+
+# Portal ATM 数据面（HTTP :8081）。不要改成 Portal 网页端口（默认 8080）。
+DATA_URL=` + p.DataURL + `
+IMPORT_URL=` + p.ImportURL + `
+
+USB=sysfs
+USB_MOUNT=/mnt/fdt-usb
+USB_DIR=` + p.USBDir + `
+SCANNER=
+CAMERA=/dev/video0
+
+# ── ATM 触屏 UI 端口 / HTTPS ───────────────────────────────────────
+# 默认：本机 9080、明文 HTTP。改完 ATM_UI_* 后必须同步 ATM_UI_URL。
+ATM_UI_LISTEN=0.0.0.0:9080
+ATM_UI_TLS=0
+ATM_UI_URL=http://127.0.0.1:9080
+# 不启用 HTTPS 时：保持 ATM_UI_TLS=0。
+# ATM_UI_TLS_CERT / ATM_UI_TLS_KEY 可留空、注释掉或删掉——不会被读取，无需准备证书。
+ATM_UI_TLS_CERT=
+ATM_UI_TLS_KEY=
+
+# 例 A）HTTP 80（无证书）
+#   ATM_UI_LISTEN=0.0.0.0:80
+#   ATM_UI_TLS=0
+#   ATM_UI_TLS_CERT=
+#   ATM_UI_TLS_KEY=
+#   ATM_UI_URL=http://127.0.0.1
+#   （绑定 80 需 root 或: setcap 'cap_net_bind_service=+ep' /path/to/fdt）
+
+# 例 B）HTTPS 443（必须提供证书）
+#   ATM_UI_LISTEN=0.0.0.0:443
+#   ATM_UI_TLS=1
+#   ATM_UI_TLS_CERT=` + certEx + `
+#   ATM_UI_TLS_KEY=` + keyEx + `
+#   ATM_UI_URL=https://127.0.0.1
+#   （证书为 PEM；自签时浏览器/Chromium 需事先信任，或仅本机 kiosk 使用）
+
+# 例 C）HTTPS 自定义端口（如 8443）
+#   ATM_UI_LISTEN=0.0.0.0:8443
+#   ATM_UI_TLS=1
+#   ATM_UI_TLS_CERT=` + certEx + `
+#   ATM_UI_TLS_KEY=` + keyEx + `
+#   ATM_UI_URL=https://127.0.0.1:8443
+
+ATM_MAINT_PASSWORD=fdt-maint
+ATM_MAINT_PASSWORD_FILE=` + p.MaintPassFile + `
+ATM_IMPORT_FIELDS=` + p.ImportFields + `
+`
+	return os.WriteFile(path, []byte(body), 0o600)
+}
+
+// atmDataPlaneBase normalizes --server to the Portal ATM data plane (:8081).
+// Portal UI may be on :8080; /data and /import are fixed on :8081 (HTTP as installed).
+func atmDataPlaneBase(server string) string {
+	base := strings.TrimRight(strings.TrimSpace(server), "/")
+	if base == "" {
+		return "http://127.0.0.1:8081"
+	}
+	scheme := "http://"
+	rest := base
+	if i := strings.Index(base, "://"); i >= 0 {
+		scheme, rest = base[:i+3], base[i+3:]
+	}
+	hostport, _, _ := strings.Cut(rest, "/")
+	host, port, err := net.SplitHostPort(hostport)
+	if err != nil {
+		// bare host → assume data port 8081
+		if !strings.Contains(hostport, ":") {
+			return scheme + net.JoinHostPort(hostport, "8081")
+		}
+		return strings.TrimRight(scheme+hostport, "/")
+	}
+	if port == "" || port == "8080" {
+		port = "8081"
+	}
+	return scheme + net.JoinHostPort(host, port)
+}
+
 type envMap map[string]string
 
 func writeEnv(path string, m envMap) error {
@@ -652,7 +746,9 @@ func writeEnv(path string, m envMap) error {
 		"LDAP_STARTTLS", "LDAP_INSECURE", "LDAP_FILTER", "ENV_FILE", "PORTAL_ADMIN_PASSWORD", "PORTAL_ADMIN_USERS",
 		"MOCK_FEISHU", "FEISHU_APP_ID", "FEISHU_APP_SECRET", "FEISHU_APPROVAL_CODE",
 		"FEISHU_ENCRYPT_KEY", "FEISHU_VERIFY_TOKEN",
-		"DATA_URL", "IMPORT_URL", "USB", "SCANNER",
+		"DATA_URL", "IMPORT_URL", "USB", "SCANNER", "CAMERA",
+		"ATM_UI_LISTEN", "ATM_UI_TLS", "ATM_UI_TLS_CERT", "ATM_UI_TLS_KEY", "ATM_UI_URL",
+		"ATM_MAINT_PASSWORD", "ATM_MAINT_PASSWORD_FILE", "ATM_IMPORT_FIELDS",
 	}
 	seen := map[string]bool{}
 	for _, k := range keys {

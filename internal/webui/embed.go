@@ -5,5 +5,5 @@ package webui
 
 import "embed"
 
-//go:embed index.html admin.html app.css app.js admin.js
+//go:embed index.html admin.html app.css app.js admin.js logo.png favicon.ico
 var FS embed.FS

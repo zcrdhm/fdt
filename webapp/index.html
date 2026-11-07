@@ -4,6 +4,8 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>数据摆渡审批</title>
+  <link rel="icon" href="/app/favicon.ico" type="image/x-icon" />
+  <link rel="apple-touch-icon" href="/app/logo.png" />
   <!-- 绝对路径：主页为 /app（无尾斜杠）时，相对 ./app.css 会错误解析成 /app.css -->
   <link rel="stylesheet" href="/app/app.css" />
   <!-- 飞书 H5 JSSDK：仅在飞书客户端内可用 scanCode -->
@@ -13,6 +15,7 @@
   <main class="page">
     <section id="view-idle" class="view">
       <div class="hero">
+        <img class="brand-logo" src="/app/logo.png" width="56" height="56" alt="FDT" />
         <h1>数据摆渡审批</h1>
         <p>扫描 QR#1（Portal 导出或 ATM 导入），用当前飞书账号发起审批——谁扫码谁申请。</p>
       </div>
@@ -71,6 +74,14 @@
       <p class="hint" id="done-hint">到 ATM 扫此放行码完成兑付。</p>
       <button type="button" class="ghost" id="btn-reset-done">开始新的摆渡</button>
       <button type="button" class="ghost" id="btn-done-history">返回历史</button>
+    </section>
+
+    <section id="view-expired" class="view hidden">
+      <h2 class="done-title" style="margin-top:24px;color:var(--danger)">订阅已到期</h2>
+      <p class="hint" style="text-align:center;margin-top:12px" id="expired-text">
+        当前租户订阅已到期，无法发起新的审批。请联系管理员续期后再试。
+      </p>
+      <button type="button" class="ghost" id="btn-expired-home">返回首页</button>
     </section>
 
     <section id="view-error" class="view hidden">

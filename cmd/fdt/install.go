@@ -16,7 +16,7 @@ func cmdInstall(args []string) error {
 	}
 	bundle := fs.String("bundle", "", "密钥包 .tgz（gateway/atm 从内网 outbox 拷来）")
 	tenants := fs.String("tenants", "", "网关多租户：tenants.json（每客户 PK_内网/SK_网关/飞书凭据）")
-	server := fs.String("server", "", "ATM: 内网 Portal 根地址，如 http://10.0.0.5:8080")
+	server := fs.String("server", "", "ATM: Portal 数据面地址，如 http://10.0.0.5:8081（写 :8080 也会改写到 :8081）")
 	device := fs.String("device", "atm-01", "设备 id")
 	tenant := fs.String("tenant", "default", "租户 id（内网写入 QR 帧头；多租户时必填客户 id）")
 	listen := fs.String("listen", "0.0.0.0:8080", "内网统一监听地址")

@@ -20,6 +20,11 @@ html, body {
 .page { padding: 24px 20px 40px; max-width: 480px; margin: 0 auto; }
 .view.hidden { display: none; }
 .hero { margin: 28px 0 20px; }
+.brand-logo {
+  display: block; width: 56px; height: 56px; border-radius: 14px;
+  background: #fff; object-fit: contain; margin: 0 0 14px;
+  box-shadow: 0 4px 16px rgba(31,35,41,.12);
+}
 .hero h1 { margin: 0; font-size: 24px; font-weight: 600; }
 .hero p { margin: 10px 0 0; font-size: 14px; color: var(--muted); line-height: 1.6; }
 

@@ -3,8 +3,11 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"flag"
 	"fmt"
+	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -115,8 +118,8 @@ func cmdATM(args []string) error {
 	gwPub := fs.String("gateway-pub", filepath.Join(keys, "pk_gateway.pem"), "")
 	deviceID := fs.String("device-id", envOr(env, "DEVICE_ID", "atm-01"), "")
 	secret := fs.String("device-secret", envOr(env, "DEVICE_SECRET", "dev-secret"), "")
-	dataURL := fs.String("datasvc-url", envOr(env, "DATA_URL", "http://127.0.0.1:8080/data"), "")
-	impURL := fs.String("importer-url", envOr(env, "IMPORT_URL", "http://127.0.0.1:8080/import"), "")
+	dataURL := fs.String("datasvc-url", envOr(env, "DATA_URL", "http://127.0.0.1:8081/data"), "Portal ATM 数据口（固定 :8081/data）")
+	impURL := fs.String("importer-url", envOr(env, "IMPORT_URL", "http://127.0.0.1:8081/import"), "Portal ATM 导入口（固定 :8081/import）")
 	usbMode := fs.String("usb", envOr(env, "USB", "mock"), "")
 	usbDir := fs.String("usb-dir", envOr(env, "USB_DIR", ""), "")
 	qr2 := fs.String("qr2", "", "")
@@ -124,7 +127,11 @@ func cmdATM(args []string) error {
 	scannerBaud := fs.Int("scanner-baud", 9600, "")
 	cameraDev := fs.String("camera", envOr(env, "CAMERA", ""), "摄像头，如 /dev/video0（需 ffmpeg）")
 	ui := fs.Bool("ui", false, "启动 ATM 触屏/网页界面")
-	listen := fs.String("listen", envOr(env, "ATM_UI_LISTEN", "0.0.0.0:9080"), "ATM UI 监听地址（配合 -ui）")
+	listen := fs.String("listen", envOr(env, "ATM_UI_LISTEN", "0.0.0.0:9080"), "ATM UI 监听（可改 0.0.0.0:80 / :443）")
+	uiTLS := fs.Bool("ui-tls", envTruthy(env, "ATM_UI_TLS") || envTruthy(env, "TLS"), "ATM UI 启用 HTTPS（证书见 -ui-tls-cert/-ui-tls-key）")
+	uiTLSCert := fs.String("ui-tls-cert", firstNonEmpty(env["ATM_UI_TLS_CERT"], env["TLS_CERT"], filepath.Join(keys, "server.pem")), "ATM UI TLS 证书 PEM")
+	uiTLSKey := fs.String("ui-tls-key", firstNonEmpty(env["ATM_UI_TLS_KEY"], env["TLS_KEY"], filepath.Join(keys, "server.key")), "ATM UI TLS 私钥 PEM")
+	uiPublic := fs.String("ui-url", envOr(env, "ATM_UI_URL", ""), "ATM UI 对外 origin（如 https://atm.local）；空则按 listen/TLS 推导")
 	maintPass := fs.String("maint-password", envOr(env, "ATM_MAINT_PASSWORD", "fdt-maint"), "维护模式密码（退出全屏用）")
 	maintPassFile := fs.String("maint-password-file", envOr(env, "ATM_MAINT_PASSWORD_FILE", filepath.Join(dataDir, "atm_maint_password")), "维护密码持久化文件")
 	defaultImportFields := "/opt/fdt-atm/etc/import-fields.json"
@@ -170,17 +177,36 @@ func cmdATM(args []string) error {
 
 	if *ui {
 		_ = atmui.WriteDefaultImportFields(*importFields)
+		publicBase := strings.TrimRight(strings.TrimSpace(*uiPublic), "/")
+		if publicBase == "" {
+			publicBase = deriveATMUIPublicBase(*listen, *uiTLS)
+		}
 		srv := atmui.NewWithOptions(k, atmui.Options{
 			Camera:            *cameraDev,
 			MaintPassword:     *maintPass,
 			MaintPasswordFile: *maintPassFile,
 			ImportFieldsFile:  *importFields,
+			PublicBase:        publicBase,
 		})
-		fmt.Printf("ATM Kiosk UI: http://127.0.0.1%s/\n", portOnly(*listen))
-		fmt.Printf("  监听 %s · 设备 %s · 摄像头 %s\n", *listen, *deviceID, *cameraDev)
+		httpSrv := &http.Server{Addr: *listen, Handler: srv.Handler()}
+		if *uiTLS {
+			cert, err := tls.LoadX509KeyPair(*uiTLSCert, *uiTLSKey)
+			if err != nil {
+				return fmt.Errorf("ATM UI TLS: 无法加载证书 %s / %s: %w", *uiTLSCert, *uiTLSKey, err)
+			}
+			httpSrv.TLSConfig = &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
+		}
+		fmt.Printf("ATM Kiosk UI: %s/\n", publicBase)
+		fmt.Printf("  监听 %s · %s · 设备 %s · 摄像头 %s\n", *listen, map[bool]string{true: "HTTPS", false: "HTTP"}[*uiTLS], *deviceID, *cameraDev)
+		fmt.Printf("  Portal 数据口 %s · 导入口 %s（与 UI 端口无关，默认 :8081）\n", *dataURL, *impURL)
 		fmt.Printf("  维护密码文件 %s（默认密码见 ATM_MAINT_PASSWORD）\n", *maintPassFile)
 		fmt.Printf("  导入表单 %s\n", *importFields)
-		return http.ListenAndServe(*listen, srv.Handler())
+		if httpSrv.TLSConfig != nil {
+			log.Printf("atm-ui listening on %s (https)", *listen)
+			return httpSrv.ListenAndServeTLS("", "")
+		}
+		log.Printf("atm-ui listening on %s (http)", *listen)
+		return httpSrv.ListenAndServe()
 	}
 
 	ctx := context.Background()
@@ -230,6 +256,43 @@ func portOnly(addr string) string {
 		return addr[i:]
 	}
 	return ":9080"
+}
+
+func envTruthy(m map[string]string, k string) bool {
+	v := strings.ToLower(strings.TrimSpace(m[k]))
+	return v == "1" || v == "true" || v == "yes" || v == "on"
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
+// deriveATMUIPublicBase builds the loopback origin browsers/kiosk should open.
+func deriveATMUIPublicBase(listen string, https bool) string {
+	scheme := "http"
+	if https {
+		scheme = "https"
+	}
+	host, port, err := net.SplitHostPort(listen)
+	if err != nil {
+		port = strings.TrimPrefix(portOnly(listen), ":")
+		if port == "" {
+			port = "9080"
+		}
+		host = "127.0.0.1"
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" || host == "[::]" {
+		host = "127.0.0.1"
+	}
+	if (https && port == "443") || (!https && port == "80") {
+		return scheme + "://" + host
+	}
+	return scheme + "://" + host + ":" + port
 }
 
 // loadATMEnv finds the ATM role config without clobbering a co-located intranet

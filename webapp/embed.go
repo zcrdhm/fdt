@@ -5,5 +5,5 @@ package webapp
 
 import "embed"
 
-//go:embed index.html app.js app.css
+//go:embed index.html app.js app.css logo.png favicon.ico
 var FS embed.FS

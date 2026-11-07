@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -47,6 +48,8 @@ type Meta struct {
 	Status           string                   `json:"status"`
 	CreatedAt        time.Time                `json:"createdAt"`
 	UpdatedAt        time.Time                `json:"updatedAt"`
+	// ExpiresAt is the subscription end (inclusive). Zero = never expires.
+	ExpiresAt        time.Time                `json:"expiresAt,omitempty"`
 	InviteToken      string                   `json:"inviteToken,omitempty"`
 	InviteExpiry     time.Time                `json:"inviteExpiry,omitempty"`
 	OperatorUser     string                   `json:"operatorUser,omitempty"`
@@ -64,6 +67,9 @@ type PublicView struct {
 	Status               string    `json:"status"`
 	CreatedAt            time.Time `json:"createdAt"`
 	UpdatedAt            time.Time `json:"updatedAt"`
+	ExpiresAt            time.Time `json:"expiresAt,omitempty"`
+	ExpiresAtDate        string    `json:"expiresAtDate,omitempty"` // YYYY-MM-DD for forms
+	SubscriptionExpired  bool      `json:"subscriptionExpired"`
 	HasInternalPub       bool      `json:"hasInternalPub"`
 	HasGatewayKey        bool      `json:"hasGatewayKey"`
 	FeishuBound          bool      `json:"feishuBound"`
@@ -105,8 +111,23 @@ func (s *Store) metaPath(id string) string  { return filepath.Join(s.tenantDir(i
 
 func (s *Store) EnsureLayout() error { return os.MkdirAll(s.Dir, 0o700) }
 
+// ParseExpiryDate parses YYYY-MM-DD as end-of-day local time. Empty → zero (never).
+func ParseExpiryDate(s string) (time.Time, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return time.Time{}, nil
+	}
+	t, err := time.ParseInLocation("2006-01-02", s, time.Local)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("有效期日期格式应为 YYYY-MM-DD")
+	}
+	// Inclusive through 23:59:59.999 that day.
+	return t.Add(24*time.Hour - time.Millisecond), nil
+}
+
 // CreateTenant mints SK_网关 and a registration link (status=pending).
-func (s *Store) CreateTenant(id, displayName string) (*PublicView, error) {
+// expiresAt zero means never expires.
+func (s *Store) CreateTenant(id, displayName string, expiresAt time.Time) (*PublicView, error) {
 	if !codec.ValidTenant(id) {
 		return nil, ErrBadID
 	}
@@ -140,7 +161,7 @@ func (s *Store) CreateTenant(id, displayName string) (*PublicView, error) {
 	now := time.Now().UTC()
 	meta := Meta{
 		ID: id, DisplayName: displayName, Status: StatusPending,
-		CreatedAt: now, UpdatedAt: now,
+		CreatedAt: now, UpdatedAt: now, ExpiresAt: expiresAt,
 		InviteToken: tok, InviteExpiry: now.Add(s.inviteTTL()),
 		Feishu: gateway.TenantFeishuFile{Mode: ""},
 	}
@@ -150,6 +171,23 @@ func (s *Store) CreateTenant(id, displayName string) (*PublicView, error) {
 	}
 	_ = s.rewriteIndexLocked()
 	return s.viewLocked(meta), nil
+}
+
+// SetExpiresAt updates the subscription end date (zero clears / never expires).
+func (s *Store) SetExpiresAt(id string, expiresAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	meta, err := s.readMetaLocked(id)
+	if err != nil {
+		return err
+	}
+	meta.ExpiresAt = expiresAt
+	meta.UpdatedAt = time.Now().UTC()
+	if err := s.writeMetaLocked(*meta); err != nil {
+		return err
+	}
+	_ = s.rewriteIndexLocked()
+	return s.syncLiveLocked(id, *meta)
 }
 
 func (s *Store) List() ([]PublicView, error) {
@@ -537,6 +575,8 @@ func (s *Store) viewLocked(m Meta) *PublicView {
 	v := &PublicView{
 		ID: m.ID, DisplayName: m.DisplayName, Status: m.Status,
 		CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt,
+		ExpiresAt: m.ExpiresAt,
+		SubscriptionExpired: !m.ExpiresAt.IsZero() && time.Now().After(m.ExpiresAt),
 		HasInternalPub: errPub == nil, HasGatewayKey: errKey == nil,
 		FeishuBound: bound, FeishuMode: m.Feishu.Mode,
 		ApprovalProvider: provider, ApprovalProviderNote: note,
@@ -548,6 +588,9 @@ func (s *Store) viewLocked(m Meta) *PublicView {
 		HasFeishuVerifyToken: m.Feishu.VerificationToken != "",
 		OperatorUser: m.OperatorUser, ContactEmail: m.ContactEmail, ContactName: m.ContactName,
 		Notes: m.Notes, InviteExpiry: m.InviteExpiry,
+	}
+	if !m.ExpiresAt.IsZero() {
+		v.ExpiresAtDate = m.ExpiresAt.In(time.Local).Format("2006-01-02")
 	}
 	if m.InviteToken != "" {
 		v.RegisterURL = "/register/#" + m.InviteToken
@@ -624,6 +667,7 @@ func (s *Store) buildConfigLocked(meta Meta) (*gateway.TenantConfig, error) {
 	}
 	return &gateway.TenantConfig{
 		InternalPub: pub, Signer: signer, Feishu: client, FeishuTenantKey: meta.Feishu.FeishuTenantKey,
+		ExpiresAt: meta.ExpiresAt,
 	}, nil
 }
 

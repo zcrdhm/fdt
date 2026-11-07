@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"fdt/internal/crypto"
 	"fdt/internal/gateway"
@@ -19,7 +20,7 @@ func TestRegisterThenConsoleBind(t *testing.T) {
 	}
 	_ = st.EnsureLayout()
 
-	v, err := st.CreateTenant("acme", "Acme")
+	v, err := st.CreateTenant("acme", "Acme", time.Time{})
 	if err != nil || v.Status != StatusPending || v.RegisterURL == "" {
 		t.Fatalf("create: %+v %v", v, err)
 	}

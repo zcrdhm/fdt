@@ -4,11 +4,16 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>FDT 数据摆渡-内网 Portal</title>
+  <link rel="icon" href="/favicon.ico" type="image/x-icon" />
+  <link rel="apple-touch-icon" href="/logo.png" />
   <link rel="stylesheet" href="/app.css" />
 </head>
 <body>
   <div class="wrap">
     <section id="view-login" class="login-card card hidden">
+      <div class="login-brand">
+        <img class="brand-logo" src="/logo.png" width="48" height="48" alt="FDT" />
+      </div>
       <div class="role-switch" role="tablist" aria-label="登录身份">
         <a class="role-btn on" href="/" aria-current="page">用户</a>
         <a class="role-btn" href="/admin/">管理员</a>
@@ -29,8 +34,13 @@
     <section id="view-app" class="hidden">
       <div class="top">
         <div class="brand">
-          <h1>FDT 数据摆渡-内网 Portal</h1>
-          <p>离线侧上传与签发 QR#1。申请人身份来自目录；飞书用户 ID 可单独绑定。</p>
+          <div class="brand-row">
+            <img class="brand-logo" src="/logo.png" width="48" height="48" alt="" />
+            <div>
+              <h1>FDT 数据摆渡-内网 Portal</h1>
+              <p>离线侧上传与签发 QR#1。申请人身份来自目录；飞书用户 ID 可单独绑定。</p>
+            </div>
+          </div>
         </div>
         <div class="nav">
           <button type="button" class="ghost" id="btn-tab-export">发起导出</button>

@@ -18,13 +18,17 @@
     jsReady: false,
     appId: '',
     fromHistory: false,
+    subscriptionExpired: false,
   };
 
   const $ = (id) => document.getElementById(id);
 
   function show(step) {
+    if (state.subscriptionExpired && step !== 'expired') {
+      step = 'expired';
+    }
     state.step = step;
-    ['idle', 'history', 'submitting', 'pending', 'done', 'error'].forEach((name) => {
+    ['idle', 'history', 'submitting', 'pending', 'done', 'error', 'expired'].forEach((name) => {
       const el = $('view-' + name);
       if (el) el.classList.toggle('hidden', name !== step);
     });
@@ -38,7 +42,7 @@
 
   function stepFromHash() {
     const h = (location.hash || '').replace(/^#\/?/, '');
-    if (['history', 'done', 'error', 'pending', 'submitting'].indexOf(h) >= 0) return h;
+    if (['history', 'done', 'error', 'expired', 'pending', 'submitting'].indexOf(h) >= 0) return h;
     return 'idle';
   }
 
@@ -59,6 +63,13 @@
   }
 
   function applyStepFromHistory(step) {
+    if (state.subscriptionExpired) {
+      show('expired');
+      try {
+        history.replaceState({ step: 'expired', lock: true }, '', pageURL('expired'));
+      } catch (_) {}
+      return;
+    }
     if (step === 'idle') {
       state.fromHistory = false;
       show('idle');
@@ -73,6 +84,10 @@
   }
 
   function goHome() {
+    if (state.subscriptionExpired) {
+      showSubscriptionExpired();
+      return;
+    }
     state.reqId = '';
     state.instanceId = '';
     state.status = '';
@@ -92,6 +107,20 @@
     const backBtn = $('btn-reset-err');
     if (backBtn) backBtn.textContent = state.fromHistory ? '返回历史' : '返回首页';
     navigate('error');
+  }
+
+  function showSubscriptionExpired(msg) {
+    state.fromHistory = false;
+    state.subscriptionExpired = true;
+    const el = $('expired-text');
+    if (el) {
+      el.textContent = msg || '当前租户订阅已到期，无法发起新的审批。请联系管理员续期后再试。';
+    }
+    // replace：覆盖当前历史，避免返回键回到可用首页。
+    show('expired');
+    try {
+      history.replaceState({ step: 'expired', lock: true }, '', pageURL('expired'));
+    } catch (_) {}
   }
 
   function leaveError() {
@@ -212,6 +241,10 @@
   }
 
   function refreshIdentity() {
+    if (state.subscriptionExpired) {
+      showSubscriptionExpired();
+      return Promise.resolve();
+    }
     const fetchBtn = $('btn-fetch-bind-id');
     if (fetchBtn) {
       fetchBtn.disabled = true;
@@ -298,7 +331,44 @@
     }));
   }
 
+  function peekTenant(frame) {
+    frame = String(frame || '');
+    if (frame.indexOf('FDT1.') !== 0) return '';
+    const rest = frame.slice(5);
+    const i = rest.indexOf('.');
+    return i > 0 ? rest.slice(0, i) : '';
+  }
+
+  function isSubscriptionExpiredPayload(data, status) {
+    if (status === 403 && data && (data.error === 'subscription_expired' ||
+        /订阅已到期|subscription_expired/i.test(String(data.message || data.error || '')))) {
+      return true;
+    }
+    if (data && data.expired === true) return true;
+    const msg = typeof data === 'string' ? data : (data && (data.message || data.error)) || '';
+    return /订阅已到期|subscription_expired/i.test(String(msg));
+  }
+
+  function checkSubscription(tenant) {
+    const q = tenant ? ('?tenant=' + encodeURIComponent(tenant)) : '';
+    return api('/subscription' + q, { method: 'GET' }).then((r) => {
+      if (r.ok && r.data && r.data.expired) {
+        showSubscriptionExpired(r.data.message || '订阅已到期，请联系管理员续期');
+        return true;
+      }
+      // 续期后解除锁定
+      if (state.subscriptionExpired) {
+        state.subscriptionExpired = false;
+      }
+      return false;
+    }).catch(() => false);
+  }
+
   function submit(frame) {
+    if (state.subscriptionExpired) {
+      showSubscriptionExpired();
+      return;
+    }
     frame = (frame || '').trim();
     if (!frame || frame.indexOf('FDT1.') !== 0) {
       setError('不是有效的摆渡申请二维码');
@@ -306,52 +376,62 @@
     }
     state.fromHistory = false;
     navigate('submitting');
-    // 先拿飞书登录用户授权码，网关用其覆盖 QR#1 里的申请人（谁扫码谁申请）。
-    let authErrMsg = '';
-    requestAuthCode()
-      .catch((err) => {
-        // mock / 非飞书环境：无 authCode 提交，仅 mock 飞书会接受；live 会由网关拒绝并拼上本错误。
-        authErrMsg = err && (err.message || String(err)) || '未知授权错误';
-        console.warn(authErrMsg);
-        updateAuthHelp('最近一次授权失败: ' + authErrMsg);
-        return '';
-      })
-      .then((authCode) => api('/submit', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ frame: frame, authCode: authCode || '' }),
-      }))
-      .then((r) => {
-        if (!r.ok) {
-          let msg = typeof r.data === 'string' ? r.data : String(r.status);
-          if (authErrMsg && /谁扫码谁申请|授权后提交|authCode|飞书身份|invalid url/i.test(msg + authErrMsg)) {
-            msg = '未能获取飞书登录授权（authCode 为空）。\n' +
-              authErrMsg + '\n\n' +
-              '请把下面地址原样加入【该 AppId】的重定向 URL，并重新发布应用：\n' +
-              pagePath() + '\nAppId=' + (state.appId || '?');
+    const tenant = peekTenant(frame);
+    // 先查订阅，避免到期后还走飞书授权。
+    checkSubscription(tenant).then((expired) => {
+      if (expired) return;
+      let authErrMsg = '';
+      return requestAuthCode()
+        .catch((err) => {
+          authErrMsg = err && (err.message || String(err)) || '未知授权错误';
+          console.warn(authErrMsg);
+          updateAuthHelp('最近一次授权失败: ' + authErrMsg);
+          return '';
+        })
+        .then((authCode) => api('/submit', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ frame: frame, authCode: authCode || '' }),
+        }))
+        .then((r) => {
+          if (!r.ok) {
+            if (isSubscriptionExpiredPayload(r.data, r.status)) {
+              showSubscriptionExpired((r.data && r.data.message) || '订阅已到期，请联系管理员续期');
+              return;
+            }
+            let msg = typeof r.data === 'string' ? r.data : (r.data && r.data.message) || String(r.status);
+            if (authErrMsg && /谁扫码谁申请|授权后提交|authCode|飞书身份|invalid url/i.test(msg + authErrMsg)) {
+              msg = '未能获取飞书登录授权（authCode 为空）。\n' +
+                authErrMsg + '\n\n' +
+                '请把下面地址原样加入【该 AppId】的重定向 URL，并重新发布应用：\n' +
+                pagePath() + '\nAppId=' + (state.appId || '?');
+            }
+            setError('网关校验失败: ' + msg);
+            return;
           }
-          setError('网关校验失败: ' + msg);
-          return;
-        }
-        state.reqId = r.data.reqId || r.data.ReqID || '';
-        state.instanceId = r.data.instanceId || r.data.InstanceID || '';
-        state.status = r.data.status || r.data.Status || '';
-        state.direction = r.data.direction || r.data.Direction || state.direction || '';
-        state.manifestText = r.data.manifestText || r.data.ManifestText || '';
-        $('req-id').textContent = state.reqId;
-        $('instance-id').textContent = state.instanceId;
-        $('status').textContent = state.status + (state.direction ? ' · ' + (isImport() ? '导入' : '导出') : '');
-        $('manifest').textContent = state.manifestText;
-        navigate('pending', 'replace');
-        poll();
-      })
-      .catch((err) => setError('网络错误: ' + (err.message || err)));
+          state.reqId = r.data.reqId || r.data.ReqID || '';
+          state.instanceId = r.data.instanceId || r.data.InstanceID || '';
+          state.status = r.data.status || r.data.Status || '';
+          state.direction = r.data.direction || r.data.Direction || state.direction || '';
+          state.manifestText = r.data.manifestText || r.data.ManifestText || '';
+          $('req-id').textContent = state.reqId;
+          $('instance-id').textContent = state.instanceId;
+          $('status').textContent = state.status + (state.direction ? ' · ' + (isImport() ? '导入' : '导出') : '');
+          $('manifest').textContent = state.manifestText;
+          navigate('pending', 'replace');
+          poll();
+        });
+    }).catch((err) => setError('网络错误: ' + (err.message || err)));
   }
 
   function poll() {
-    if (state.step === 'done') return;
+    if (state.step === 'done' || state.step === 'expired') return;
     api('/qr2?reqId=' + encodeURIComponent(state.reqId), { method: 'GET' })
       .then((r) => {
+        if (isSubscriptionExpiredPayload(r.data, r.status)) {
+          showSubscriptionExpired((r.data && r.data.message) || '订阅已到期，请联系管理员续期');
+          return;
+        }
         if (r.ok && r.data) {
           const dir = r.data.direction || r.data.Direction || state.direction;
           if (dir) state.direction = dir;
@@ -413,6 +493,10 @@
   }
 
   function loadHistory(opts) {
+    if (state.subscriptionExpired) {
+      showSubscriptionExpired();
+      return;
+    }
     if (!(opts && opts.silent)) navigate('history');
     else show('history');
     $('history-list').innerHTML = '<p class="hint">加载中…</p>';
@@ -504,6 +588,10 @@
   }
 
   function scanQR1() {
+    if (state.subscriptionExpired) {
+      showSubscriptionExpired();
+      return;
+    }
     ensureJSAPI()
       .then(() => new Promise((resolve, reject) => {
         const fn = (window.tt && window.tt.scanCode) || (window.h5sdk && window.h5sdk.scanCode);
@@ -522,6 +610,10 @@
   }
 
   window.addEventListener('popstate', (ev) => {
+    if (state.subscriptionExpired) {
+      showSubscriptionExpired();
+      return;
+    }
     const step = (ev.state && ev.state.step) || stepFromHash();
     applyStepFromHistory(step);
     if (step === 'history') loadHistory({ silent: true });
@@ -532,6 +624,10 @@
       const tt = window.tt;
       if (!tt || typeof tt.onHistoryBack !== 'function') return;
       tt.onHistoryBack(() => {
+        if (state.subscriptionExpired) {
+          showSubscriptionExpired();
+          return true; // 拦截返回，不允许回到可用页；点顶栏 X 关闭应用
+        }
         if (state.step && state.step !== 'idle') {
           // 优先消费 H5 history，回到上一屏（历史→首页）
           try { history.back(); } catch (_) { goHome(); }
@@ -546,6 +642,13 @@
   $('btn-paste').addEventListener('click', () => submit($('frame-input').value));
   $('btn-reset-done').addEventListener('click', goHome);
   $('btn-reset-err').addEventListener('click', leaveError);
+  if ($('btn-expired-home')) {
+    $('btn-expired-home').addEventListener('click', () => {
+      checkSubscription().then((expired) => {
+        if (!expired) goHome();
+      });
+    });
+  }
   $('btn-history').addEventListener('click', loadHistory);
   $('btn-history-back').addEventListener('click', () => {
     if (history.state && history.state.step === 'history') history.back();
@@ -589,5 +692,7 @@
     if (boot === 'history') loadHistory({ silent: true });
     else if (boot !== 'idle') applyStepFromHistory(boot);
   } catch (_) {}
+  // 单租户网关：打开应用即检测订阅是否到期。
+  checkSubscription();
   wireFeishuBack();
 })();

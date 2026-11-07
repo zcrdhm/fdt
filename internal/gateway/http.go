@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"io/fs"
 	"net"
@@ -43,6 +44,7 @@ func (h *Handler) Router() http.Handler {
 	})
 	mux.HandleFunc("POST /submit", h.submit)
 	mux.HandleFunc("POST /whoami", h.whoami)
+	mux.HandleFunc("GET /subscription", h.subscription)
 	mux.HandleFunc("GET /qr2", h.qr2)
 	mux.HandleFunc("GET /qr2/png", h.qr2PNG)
 	mux.HandleFunc("GET /history", h.history)
@@ -94,6 +96,10 @@ func serveWebAppAsset(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/css; charset=utf-8")
 	case strings.HasSuffix(name, ".html"):
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	case strings.HasSuffix(name, ".png"):
+		w.Header().Set("Content-Type", "image/png")
+	case strings.HasSuffix(name, ".ico"):
+		w.Header().Set("Content-Type", "image/x-icon")
 	}
 	w.Header().Set("Cache-Control", "no-cache")
 	_, _ = w.Write(b)
@@ -123,6 +129,34 @@ func (h *Handler) jsapiConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, cfg)
 }
 
+func writeSubscriptionExpired(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusForbidden)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"error":   "subscription_expired",
+		"message": "订阅已到期，请联系管理员续期",
+	})
+}
+
+func (h *Handler) subscription(w http.ResponseWriter, r *http.Request) {
+	tenant := strings.TrimSpace(r.URL.Query().Get("tenant"))
+	if tenant == "" {
+		if frame := strings.TrimSpace(r.URL.Query().Get("frame")); frame != "" {
+			if id, err := h.Svc.PeekTenantID(frame); err == nil {
+				tenant = id
+			}
+		}
+	}
+	st := h.Svc.LookupSubscription(tenant)
+	if st.Expired {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusOK) // informational; clients branch on expired
+		_ = json.NewEncoder(w).Encode(st)
+		return
+	}
+	writeJSON(w, http.StatusOK, st)
+}
+
 func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Frame    string `json:"frame"`
@@ -134,6 +168,10 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 	}
 	sub, err := h.Svc.SubmitQR1(r.Context(), body.Frame, body.AuthCode)
 	if err != nil {
+		if errors.Is(err, ErrSubscriptionExpired) {
+			writeSubscriptionExpired(w)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -165,6 +203,10 @@ func (h *Handler) qr2(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := h.Svc.PollQR2(r.Context(), reqID)
 	if err != nil {
+		if errors.Is(err, ErrSubscriptionExpired) {
+			writeSubscriptionExpired(w)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
@@ -197,6 +239,10 @@ func (h *Handler) qr2PNG(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := h.Svc.PollQR2(r.Context(), reqID)
 	if err != nil {
+		if errors.Is(err, ErrSubscriptionExpired) {
+			writeSubscriptionExpired(w)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}

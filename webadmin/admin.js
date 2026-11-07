@@ -202,12 +202,17 @@
       const v = await api('/admin/api/tenants', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ id: $('new-id').value.trim(), displayName: $('new-name').value.trim() }),
+        body: JSON.stringify({
+          id: $('new-id').value.trim(),
+          displayName: $('new-name').value.trim(),
+          expiresAt: ($('new-expires').value || '').trim(),
+        }),
       });
       const url = originBase() + (v.registerUrlPath || '');
       $('create-invite').textContent = '注册链接（发给客户）：' + url;
       $('new-id').value = '';
       $('new-name').value = '';
+      $('new-expires').value = '';
       refresh();
     } catch (e) {
       $('create-err').textContent = e.message || String(e);
@@ -226,9 +231,15 @@
       const reg = t.registerUrlPath
         ? `<div class="mono">${esc(originBase())}${esc(t.registerUrlPath)}</div>`
         : (t.operatorUser ? '<span class="sub">已注册 · ' + esc(t.operatorUser) + '</span>' : '—');
+      const expLabel = t.expiresAtDate
+        ? (t.subscriptionExpired
+          ? '<span class="badge disabled">已到期 ' + esc(t.expiresAtDate) + '</span>'
+          : esc(t.expiresAtDate))
+        : '<span class="sub">永久</span>';
       tr.innerHTML = `
         <td><strong>${esc(t.id)}</strong><div class="sub">${esc(t.displayName || '')}</div></td>
         <td><span class="badge ${esc(t.status)}">${esc(t.status)}</span></td>
+        <td>${expLabel}</td>
         <td>
           PK_内网: ${t.hasInternalPub ? '✓' : '✗'} · 飞书: ${t.feishuBound ? '✓' : '✗'}<br/>
           <span class="sub">${esc(t.contactEmail || '')}</span>
@@ -237,6 +248,7 @@
         <td class="actions"></td>`;
       const actions = tr.querySelector('.actions');
       addBtn(actions, '换发注册链接', 'ghost', () => inviteOf(t.id));
+      addBtn(actions, '改有效期', 'ghost', () => setExpiry(t.id, t.expiresAtDate || ''));
       if (t.status === 'disabled') addBtn(actions, '启用', 'ghost', () => patch(t.id, { status: 'active' }));
       else addBtn(actions, '禁用', 'ghost', () => patch(t.id, { status: 'disabled' }));
       addBtn(actions, '删除', 'danger', () => del(t.id));
@@ -267,6 +279,106 @@
     });
     refresh();
   }
+
+  let expiryState = { id: '', preset: '1y', date: '' };
+
+  function addMonths(d, months) {
+    const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const day = x.getDate();
+    x.setMonth(x.getMonth() + months);
+    if (x.getDate() < day) x.setDate(0);
+    return x;
+  }
+
+  function fmtDate(d) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return y + '-' + m + '-' + day;
+  }
+
+  function dateFromPreset(preset, custom) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    switch (preset) {
+      case '1m': return fmtDate(addMonths(today, 1));
+      case '3m': return fmtDate(addMonths(today, 3));
+      case '6m': return fmtDate(addMonths(today, 6));
+      case '1y': return fmtDate(addMonths(today, 12));
+      case 'forever': return '';
+      case 'custom': return String(custom || '').trim();
+      default: return fmtDate(addMonths(today, 12));
+    }
+  }
+
+  function updateExpiryPreview() {
+    const date = dateFromPreset(expiryState.preset, $('expiry-date').value);
+    expiryState.date = date;
+    if (!date) {
+      $('expiry-preview').textContent = '将设为：永久有效';
+    } else {
+      $('expiry-preview').textContent = '将设为到期日：' + date + '（含当天）';
+    }
+  }
+
+  function openExpiryModal(id, current) {
+    expiryState = { id: id, preset: current ? 'custom' : '1y', date: current || '' };
+    $('expiry-tenant').textContent = id;
+    $('expiry-err').textContent = '';
+    $('expiry-date').value = current || dateFromPreset('1y');
+    $('expiry-custom-wrap').classList.toggle('hidden', expiryState.preset !== 'custom');
+    document.querySelectorAll('.expiry-opt').forEach((btn) => {
+      btn.classList.toggle('on', btn.getAttribute('data-preset') === expiryState.preset);
+    });
+    updateExpiryPreview();
+    $('expiry-modal').classList.remove('hidden');
+  }
+
+  function closeExpiryModal() {
+    $('expiry-modal').classList.add('hidden');
+  }
+
+  document.querySelectorAll('.expiry-opt').forEach((btn) => {
+    btn.onclick = () => {
+      expiryState.preset = btn.getAttribute('data-preset') || '1y';
+      document.querySelectorAll('.expiry-opt').forEach((b) => {
+        b.classList.toggle('on', b === btn);
+      });
+      const custom = expiryState.preset === 'custom';
+      $('expiry-custom-wrap').classList.toggle('hidden', !custom);
+      if (!custom && expiryState.preset !== 'forever') {
+        $('expiry-date').value = dateFromPreset(expiryState.preset);
+      }
+      updateExpiryPreview();
+    };
+  });
+  $('expiry-date').oninput = updateExpiryPreview;
+  $('expiry-cancel').onclick = closeExpiryModal;
+  $('expiry-backdrop').onclick = closeExpiryModal;
+  $('expiry-save').onclick = async () => {
+    $('expiry-err').textContent = '';
+    const date = dateFromPreset(expiryState.preset, $('expiry-date').value);
+    if (expiryState.preset === 'custom' && !date) {
+      $('expiry-err').textContent = '请选择自定义到期日';
+      return;
+    }
+    try {
+      await patch(expiryState.id, { expiresAt: date });
+      closeExpiryModal();
+    } catch (e) {
+      $('expiry-err').textContent = e.message || String(e);
+    }
+  };
+
+  function setExpiry(id, current) {
+    openExpiryModal(id, current || '');
+  }
+
+  // 新建租户：默认有效期 = 今天 + 1 年
+  (function initNewExpires() {
+    const el = $('new-expires');
+    if (el && !el.value) el.value = dateFromPreset('1y');
+  })();
 
   async function del(id) {
     if (!confirm('确认删除租户 ' + id + '？')) return;

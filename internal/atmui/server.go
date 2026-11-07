@@ -3,6 +3,7 @@ package atmui
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"strings"
@@ -19,6 +20,8 @@ import (
 type Server struct {
 	Kiosk  *atm.Kiosk
 	Camera string // e.g. /dev/video0; empty disables server-side camera
+	// PublicBase is scheme://host[:port] used when launching Chromium kiosk.
+	PublicBase string
 
 	maint *maintAuth
 
@@ -40,6 +43,9 @@ type Options struct {
 	MaintPassword     string // ATM_MAINT_PASSWORD bootstrap (default fdt-maint)
 	MaintPasswordFile string
 	ImportFieldsFile  string // ATM_IMPORT_FIELDS; empty → defaults
+	// PublicBase is the browser origin for kiosk launch, e.g. https://127.0.0.1 or http://127.0.0.1:9080.
+	// Empty → derive from the incoming request (loopback preferred).
+	PublicBase string
 }
 
 // New wires progress reporting onto the kiosk.
@@ -56,6 +62,7 @@ func NewWithOptions(k *atm.Kiosk, opt Options) *Server {
 	s := &Server{
 		Kiosk:        k,
 		Camera:       opt.Camera,
+		PublicBase:   strings.TrimRight(strings.TrimSpace(opt.PublicBase), "/"),
 		maint:        newMaintAuth(opt.MaintPasswordFile, opt.MaintPassword),
 		importFields: fields,
 	}
@@ -93,6 +100,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /app.css", s.ui("app.css"))
 	mux.HandleFunc("GET /app.js", s.ui("app.js"))
 	mux.HandleFunc("GET /jsQR.min.js", s.ui("jsQR.min.js"))
+	mux.HandleFunc("GET /logo.png", s.ui("logo.png"))
+	mux.HandleFunc("GET /favicon.ico", s.ui("favicon.ico"))
 	return mux
 }
 
@@ -108,6 +117,10 @@ func (s *Server) ui(name string) http.HandlerFunc {
 			w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 		case strings.HasSuffix(name, ".css"):
 			w.Header().Set("Content-Type", "text/css; charset=utf-8")
+		case strings.HasSuffix(name, ".png"):
+			w.Header().Set("Content-Type", "image/png")
+		case strings.HasSuffix(name, ".ico"):
+			w.Header().Set("Content-Type", "image/x-icon")
 		default:
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			// Allow Keyboard Lock / fullscreen in Chromium when available.
@@ -427,15 +440,33 @@ func (s *Server) maintChangePassword(w http.ResponseWriter, r *http.Request) {
 // maintLaunchKiosk starts Chromium --kiosk with a dedicated profile.
 // Page Fullscreen API cannot stop Esc; OS kiosk is the supported ATM lock.
 func (s *Server) maintLaunchKiosk(w http.ResponseWriter, r *http.Request) {
-	host := r.Host
-	if host == "" {
-		host = "127.0.0.1:9080"
+	base := strings.TrimRight(strings.TrimSpace(s.PublicBase), "/")
+	if base == "" {
+		scheme := "http"
+		if r.TLS != nil {
+			scheme = "https"
+		}
+		host := r.Host
+		if host == "" {
+			host = "127.0.0.1:9080"
+		}
+		// Prefer loopback so Keyboard Lock (secure context) works.
+		if h, _, ok := strings.Cut(host, ":"); ok && (h == "127.0.0.1" || h == "localhost" || h == "::1") {
+			base = scheme + "://" + host
+		} else if host == "127.0.0.1" || host == "localhost" {
+			base = scheme + "://" + host
+		} else {
+			port := "9080"
+			if _, p, err := splitHostPortSafe(host); err == nil && p != "" {
+				port = p
+			}
+			base = scheme + "://127.0.0.1:" + port
+			if (scheme == "https" && port == "443") || (scheme == "http" && port == "80") {
+				base = scheme + "://127.0.0.1"
+			}
+		}
 	}
-	// Prefer loopback so Keyboard Lock (secure context) works. run=1 → 打开即运营态。
-	ui := "http://127.0.0.1:9080/?kiosk=1&run=1"
-	if h, _, ok := strings.Cut(host, ":"); ok && (h == "127.0.0.1" || h == "localhost") {
-		ui = "http://" + host + "/?kiosk=1&run=1"
-	}
+	ui := base + "/?kiosk=1&run=1"
 	chrome, err := LaunchKioskBrowser(ui)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
@@ -445,6 +476,15 @@ func (s *Server) maintLaunchKiosk(w http.ResponseWriter, r *http.Request) {
 		"ok": true, "chrome": chrome, "url": ui,
 		"message": "已启动 Chromium 锁屏窗口（--kiosk）。请在该窗口操作；普通浏览器无法真正屏蔽 Esc。",
 	})
+}
+
+func splitHostPortSafe(hostport string) (host, port string, err error) {
+	// net.SplitHostPort needs brackets for IPv6; Host rarely includes them here.
+	if strings.Count(hostport, ":") == 1 {
+		i := strings.LastIndex(hostport, ":")
+		return hostport[:i], hostport[i+1:], nil
+	}
+	return hostport, "", fmt.Errorf("no port")
 }
 
 func (s *Server) begin() bool {

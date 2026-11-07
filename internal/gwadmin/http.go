@@ -192,12 +192,18 @@ func (h *Handler) createTenant(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		ID          string `json:"id"`
 		DisplayName string `json:"displayName"`
+		ExpiresAt   string `json:"expiresAt"` // YYYY-MM-DD; empty = never
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ID == "" {
 		http.Error(w, "id required", http.StatusBadRequest)
 		return
 	}
-	v, err := h.Store.CreateTenant(body.ID, body.DisplayName)
+	exp, err := ParseExpiryDate(body.ExpiresAt)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	v, err := h.Store.CreateTenant(body.ID, body.DisplayName, exp)
 	if err != nil {
 		status := http.StatusBadRequest
 		if err == ErrExists {
@@ -221,7 +227,8 @@ func (h *Handler) getTenant(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) patchTenant(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var body struct {
-		Status *string `json:"status"`
+		Status    *string `json:"status"`
+		ExpiresAt *string `json:"expiresAt"` // YYYY-MM-DD; "" clears
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "bad json", http.StatusBadRequest)
@@ -229,6 +236,17 @@ func (h *Handler) patchTenant(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Status != nil {
 		if err := h.Store.SetStatus(id, *body.Status); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	if body.ExpiresAt != nil {
+		exp, err := ParseExpiryDate(*body.ExpiresAt)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := h.Store.SetExpiresAt(id, exp); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -599,6 +617,10 @@ func serveEmbedded(w http.ResponseWriter, name string) {
 		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 	case strings.HasSuffix(name, ".css"):
 		w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	case strings.HasSuffix(name, ".png"):
+		w.Header().Set("Content-Type", "image/png")
+	case strings.HasSuffix(name, ".ico"):
+		w.Header().Set("Content-Type", "image/x-icon")
 	default:
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	}

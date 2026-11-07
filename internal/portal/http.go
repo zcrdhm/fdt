@@ -295,6 +295,10 @@ func serveUI(w http.ResponseWriter, name string) {
 		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 	case strings.HasSuffix(name, ".css"):
 		w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	case strings.HasSuffix(name, ".png"):
+		w.Header().Set("Content-Type", "image/png")
+	case strings.HasSuffix(name, ".ico"):
+		w.Header().Set("Content-Type", "image/x-icon")
 	default:
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	}

@@ -3,5 +3,5 @@ package atmui
 
 import "embed"
 
-//go:embed index.html app.css app.js jsQR.min.js
+//go:embed index.html app.css app.js jsQR.min.js logo.png favicon.ico
 var FS embed.FS

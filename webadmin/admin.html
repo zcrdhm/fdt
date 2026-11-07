@@ -4,12 +4,19 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>FDT 网关租户管理</title>
+  <link rel="icon" href="./favicon.ico" type="image/x-icon" />
+  <link rel="apple-touch-icon" href="./logo.png" />
   <link rel="stylesheet" href="./admin.css" />
 </head>
 <body>
   <div class="wrap">
-    <h1>FDT 网关 · 租户管理</h1>
-    <p class="sub">先<strong>绑定公网域名</strong>并申请证书；再新建租户发<strong>注册链接</strong>。客户在 <code>/console/</code> 上传 PEM、绑定飞书。</p>
+    <div class="page-brand">
+      <img class="brand-logo" src="./logo.png" width="44" height="44" alt="FDT" />
+      <div>
+        <h1>FDT 网关 · 租户管理</h1>
+        <p class="sub">先<strong>绑定公网域名</strong>并申请证书；再新建租户发<strong>注册链接</strong>。客户在 <code>/console/</code> 上传 PEM、绑定飞书。</p>
+      </div>
+    </div>
 
     <section id="login-view" class="card">
       <div class="role-switch" role="tablist" aria-label="登录身份">
@@ -110,6 +117,13 @@
           </div>
         </div>
         <div class="row" style="margin-top:12px">
+          <div style="flex:1;min-width:160px">
+            <label>订阅有效期（到期日）</label>
+            <input id="new-expires" type="date" />
+            <p class="sub" style="margin:6px 0 0">到期后飞书端无法发起审批，并提示「订阅已到期」。留空表示永久有效。</p>
+          </div>
+        </div>
+        <div class="row" style="margin-top:12px">
           <button type="button" id="btn-create">创建并生成注册链接</button>
         </div>
         <p class="err" id="create-err"></p>
@@ -126,6 +140,7 @@
             <tr>
               <th>ID</th>
               <th>状态</th>
+              <th>有效期</th>
               <th>密钥 / 飞书</th>
               <th>注册</th>
               <th>操作</th>
@@ -136,6 +151,34 @@
       </div>
     </section>
   </div>
+
+  <div id="expiry-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="expiry-title">
+    <div class="modal-backdrop" id="expiry-backdrop"></div>
+    <div class="modal-card">
+      <h2 id="expiry-title" style="margin:0 0 6px;font-size:16px">改有效期</h2>
+      <p class="sub" style="margin:0 0 14px">租户：<strong id="expiry-tenant"></strong></p>
+      <p class="sub" style="margin:0 0 8px">选择订阅到期日（到期后飞书端提示「订阅已到期」）：</p>
+      <div class="expiry-options" id="expiry-options">
+        <button type="button" class="expiry-opt" data-preset="1m">1 个月</button>
+        <button type="button" class="expiry-opt" data-preset="3m">3 个月</button>
+        <button type="button" class="expiry-opt" data-preset="6m">6 个月</button>
+        <button type="button" class="expiry-opt" data-preset="1y">1 年</button>
+        <button type="button" class="expiry-opt" data-preset="forever">永久</button>
+        <button type="button" class="expiry-opt" data-preset="custom">自定义</button>
+      </div>
+      <div id="expiry-custom-wrap" class="hidden" style="margin-top:12px">
+        <label for="expiry-date">自定义到期日</label>
+        <input id="expiry-date" type="date" />
+      </div>
+      <p class="sub" id="expiry-preview" style="margin:12px 0 0"></p>
+      <p class="err" id="expiry-err"></p>
+      <div class="row" style="margin-top:16px;justify-content:flex-end">
+        <button type="button" class="ghost" id="expiry-cancel">取消</button>
+        <button type="button" id="expiry-save">保存</button>
+      </div>
+    </div>
+  </div>
+
   <script src="./admin.js"></script>
 </body>
 </html>

@@ -26,11 +26,12 @@ import (
 )
 
 var (
-	ErrUnknownReq    = errors.New("gateway: unknown request/session")
-	ErrUnknownTenant = errors.New("gateway: unknown tenant")
-	ErrTenantExists  = errors.New("gateway: tenant already registered")
-	ErrNotApproved   = errors.New("gateway: approval not yet granted")
-	ErrNotRequested  = errors.New("gateway: no QR#1 submitted for this instance")
+	ErrUnknownReq           = errors.New("gateway: unknown request/session")
+	ErrUnknownTenant        = errors.New("gateway: unknown tenant")
+	ErrTenantExists         = errors.New("gateway: tenant already registered")
+	ErrNotApproved          = errors.New("gateway: approval not yet granted")
+	ErrNotRequested         = errors.New("gateway: no QR#1 submitted for this instance")
+	ErrSubscriptionExpired  = errors.New("gateway: 订阅已到期，请联系管理员续期")
 )
 
 // TenantConfig is everything the gateway needs for one customer site/org.
@@ -39,6 +40,16 @@ type TenantConfig struct {
 	Signer          token.Signer      // SK_网关 — sign this tenant's QR#2 (HSM label)
 	Feishu          feishu.Client     // self-built per tenant, or a shared ISVClient
 	FeishuTenantKey string            // customer's Feishu org key (ISV model)
+	// ExpiresAt is the subscription end (inclusive). Zero means never expires.
+	ExpiresAt time.Time
+}
+
+// SubscriptionExpired reports whether the tenant subscription is past ExpiresAt.
+func (c *TenantConfig) SubscriptionExpired(now time.Time) bool {
+	if c == nil || c.ExpiresAt.IsZero() {
+		return false
+	}
+	return now.After(c.ExpiresAt)
 }
 
 // Service is the multi-tenant gateway core.
@@ -275,6 +286,9 @@ func (s *Service) SubmitQR1(ctx context.Context, frame, authCode string) (*Submi
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrUnknownTenant, tenantID)
 	}
+	if cfg.SubscriptionExpired(time.Now()) {
+		return nil, ErrSubscriptionExpired
+	}
 	tok, err := token.OpenRequest(frame, cfg.InternalPub)
 	if err != nil {
 		return nil, fmt.Errorf("gateway: QR#1 verify: %w", err)
@@ -458,11 +472,20 @@ func (s *Service) PollQR2(ctx context.Context, reqID string) (*QR2Result, error)
 		}
 		if inst.Status == feishu.StatusApproved {
 			if err := s.mintQR2Locked(sess); err != nil {
-				s.mu.Unlock()
-				return nil, err
+				if !errors.Is(err, ErrSubscriptionExpired) {
+					s.mu.Unlock()
+					return nil, err
+				}
+				// Keep approval status but do not mint QR#2 after subscription end.
 			}
 		}
 		s.persistLocked(sess)
+	}
+	if sess.QR2Frame == "" {
+		if cfg := s.tenants[sess.Tenant]; cfg != nil && cfg.SubscriptionExpired(time.Now()) {
+			s.mu.Unlock()
+			return nil, ErrSubscriptionExpired
+		}
 	}
 	res := &QR2Result{Tenant: sess.Tenant, ReqID: reqID, Status: sess.Status,
 		QR2Frame: sess.QR2Frame, Approver: sess.Approver}
@@ -503,7 +526,7 @@ func (s *Service) HandleCallback(ctx context.Context, verifyTenant string, rawBo
 		sess.Approver = ev.Approver
 	}
 	if ev.Status == feishu.StatusApproved && sess.QR2Frame == "" {
-		if err := s.mintQR2Locked(sess); err != nil {
+		if err := s.mintQR2Locked(sess); err != nil && !errors.Is(err, ErrSubscriptionExpired) {
 			return "", err
 		}
 	}
@@ -542,6 +565,57 @@ func (s *Service) persistLocked(sess *session) {
 	_ = s.Sessions.Save(context.Background(), sess)
 }
 
+// SubscriptionStatus describes whether a tenant may still start/finish approvals.
+type SubscriptionStatus struct {
+	Tenant        string `json:"tenant,omitempty"`
+	Expired       bool   `json:"expired"`
+	ExpiresAtDate string `json:"expiresAtDate,omitempty"`
+	NeverExpires  bool   `json:"neverExpires,omitempty"`
+	Ambiguous     bool   `json:"ambiguous,omitempty"` // multi-tenant and no id given
+	Message       string `json:"message,omitempty"`
+}
+
+// PeekTenantID exposes the frame's plaintext tenant for HTTP helpers.
+func (s *Service) PeekTenantID(frame string) (string, error) {
+	return token.PeekTenant(frame)
+}
+
+// LookupSubscription returns expiry info. Empty tenant uses the sole live tenant
+// when exactly one is registered (typical single-customer gateway).
+func (s *Service) LookupSubscription(tenant string) SubscriptionStatus {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tenant = strings.TrimSpace(tenant)
+	if tenant == "" {
+		ids := make([]string, 0, len(s.tenants))
+		for id := range s.tenants {
+			ids = append(ids, id)
+		}
+		if len(ids) == 0 {
+			return SubscriptionStatus{NeverExpires: true}
+		}
+		if len(ids) > 1 {
+			return SubscriptionStatus{Ambiguous: true}
+		}
+		tenant = ids[0]
+	}
+	cfg, ok := s.tenants[tenant]
+	if !ok || cfg == nil {
+		return SubscriptionStatus{Tenant: tenant, Message: "unknown tenant"}
+	}
+	st := SubscriptionStatus{Tenant: tenant}
+	if cfg.ExpiresAt.IsZero() {
+		st.NeverExpires = true
+		return st
+	}
+	st.ExpiresAtDate = cfg.ExpiresAt.In(time.Local).Format("2006-01-02")
+	if cfg.SubscriptionExpired(time.Now()) {
+		st.Expired = true
+		st.Message = "订阅已到期，请联系管理员续期"
+	}
+	return st
+}
+
 // mintQR2Locked signs QR#2 with the SESSION's tenant key. Caller holds s.mu.
 func (s *Service) mintQR2Locked(sess *session) error {
 	if sess.QR2Frame != "" {
@@ -550,6 +624,9 @@ func (s *Service) mintQR2Locked(sess *session) error {
 	cfg := s.tenants[sess.Tenant]
 	if cfg == nil {
 		return fmt.Errorf("%w: %s", ErrUnknownTenant, sess.Tenant)
+	}
+	if cfg.SubscriptionExpired(time.Now()) {
+		return ErrSubscriptionExpired
 	}
 	now := time.Now()
 	exp := now.Add(s.ReleaseTTL)

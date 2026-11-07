@@ -96,6 +96,16 @@ USB=mock
 USB_DIR=E:\
 
 ATM_UI_LISTEN=127.0.0.1:9080
+ATM_UI_TLS=0
+ATM_UI_URL=http://127.0.0.1:9080
+# 无 HTTPS：ATM_UI_TLS=0，下面两项留空即可（不会读证书）
+ATM_UI_TLS_CERT=
+ATM_UI_TLS_KEY=
+# HTTP 80：ATM_UI_LISTEN=0.0.0.0:80  ATM_UI_TLS=0  ATM_UI_URL=http://127.0.0.1
+# HTTPS 443：ATM_UI_LISTEN=0.0.0.0:443  ATM_UI_TLS=1
+#   ATM_UI_TLS_CERT=C:\fdt-atm\etc\keys\server.pem
+#   ATM_UI_TLS_KEY=C:\fdt-atm\etc\keys\server.key
+#   ATM_UI_URL=https://127.0.0.1
 ATM_MAINT_PASSWORD=fdt-maint
 ATM_MAINT_PASSWORD_FILE=C:\fdt-atm\var\atm_maint_password
 ATM_IMPORT_FIELDS=C:\fdt-atm\etc\import-fields.json
@@ -110,7 +120,8 @@ SCANNER=
 说明：
 
 - **`USB=mock` + `USB_DIR=E:\`**：把已插入并分配盘符的 U 盘当作工作目录（需可写）。换盘时改盘符或插到同一盘符。  
-- **`DATA_URL` / `IMPORT_URL`**：必须指向内网 **`:8081`** 的 `/data`、`/import`（不是 Portal 网页端口）。  
+- **`DATA_URL` / `IMPORT_URL`**：必须指向内网 **`:8081`** 的 `/data`、`/import`（不是 Portal 网页端口，也不是 ATM UI 端口）。  
+- **`ATM_UI_LISTEN` / `ATM_UI_TLS`**：仅控制本机触屏网页；可改为 80/443 + 证书。  
 - **`DEVICE_SECRET`**：与内网设备鉴权一致；不对则拉数/导入会 401。  
 - **`ATM_IMPORT_FIELDS`**：本机导入表单 JSON；与 Portal 无关。  
 - 路径可用正斜杠 `C:/fdt-atm/...`，Go 均可识别。
