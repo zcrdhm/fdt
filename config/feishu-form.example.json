@@ -1,0 +1,11 @@
+[
+  {"id": "req_id", "type": "input", "field": "req_id"},
+  {"id": "applicant", "type": "input", "field": "applicant"},
+  {"id": "dept", "type": "input", "field": "dept"},
+  {"id": "reason", "type": "textarea", "field": "reason"},
+  {"id": "class", "type": "input", "field": "class"},
+  {"id": "merkle_root", "type": "input", "field": "merkle_root"},
+  {"id": "file_count", "type": "number", "field": "file_count"},
+  {"id": "total_size", "type": "number", "field": "total_size"},
+  {"id": "manifest", "type": "textarea", "field": "manifest"}
+]

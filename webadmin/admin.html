@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FDT 网关租户管理</title>
+  <link rel="stylesheet" href="./admin.css" />
+</head>
+<body>
+  <div class="wrap">
+    <h1>FDT 网关 · 租户管理</h1>
+    <p class="sub">先<strong>绑定公网域名</strong>并申请证书；再新建租户发<strong>注册链接</strong>。客户在 <code>/console/</code> 上传 PEM、绑定飞书。</p>
+
+    <section id="login-view" class="card">
+      <div class="role-switch" role="tablist" aria-label="登录身份">
+        <a class="role-btn on" href="/admin/" aria-current="page">管理员</a>
+        <a class="role-btn" href="/console/">租户</a>
+      </div>
+      <h2 style="margin-top:14px;font-size:16px">管理员登录</h2>
+      <p class="sub" style="margin:0 0 8px">运营侧：域名证书、租户邀请与注册链接。</p>
+      <label>用户名</label>
+      <input id="login-user" value="admin" autocomplete="username" />
+      <label>密码</label>
+      <input id="login-pass" type="password" autocomplete="current-password" />
+      <div class="row" style="margin-top:14px">
+        <button type="button" id="btn-login">登录</button>
+      </div>
+      <p class="err" id="login-err"></p>
+    </section>
+
+    <section id="app-view" class="hidden">
+      <div class="card row" style="justify-content:space-between">
+        <span>已登录：<strong id="who"></strong></span>
+        <button type="button" class="ghost" id="btn-logout">退出</button>
+      </div>
+
+      <div class="card">
+        <h2 style="margin-top:0;font-size:16px">修改密码</h2>
+        <div class="row">
+          <div style="flex:1;min-width:160px">
+            <label>当前密码</label>
+            <input id="pw-old" type="password" autocomplete="current-password" />
+          </div>
+          <div style="flex:1;min-width:160px">
+            <label>新密码（至少 8 位）</label>
+            <input id="pw-new" type="password" autocomplete="new-password" />
+          </div>
+          <div style="flex:1;min-width:160px">
+            <label>确认新密码</label>
+            <input id="pw-new2" type="password" autocomplete="new-password" />
+          </div>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <button type="button" id="btn-password">保存新密码</button>
+        </div>
+        <p class="err" id="pw-err"></p>
+        <p class="ok" id="pw-ok"></p>
+      </div>
+
+      <div class="card">
+        <h2 style="margin-top:0;font-size:16px">1. 绑定域名</h2>
+        <p class="sub" id="domain-status">加载中…</p>
+        <div class="row">
+          <div style="flex:1;min-width:180px">
+            <label>主域名</label>
+            <input id="domain-host" placeholder="fdt-gw.example.com" />
+          </div>
+          <div style="flex:1;min-width:180px">
+            <label>别名（可选，逗号分隔）</label>
+            <input id="domain-aliases" placeholder="www.fdt-gw.example.com" />
+          </div>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <div style="flex:1;min-width:180px">
+            <label>联系邮箱（证书通知）</label>
+            <input id="domain-email" type="email" placeholder="ops@example.com" />
+          </div>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <button type="button" id="btn-domain-bind">绑定域名</button>
+          <button type="button" class="ghost" id="btn-domain-check">检测 DNS 解析</button>
+        </div>
+        <p class="err" id="domain-err"></p>
+        <p class="ok" id="domain-ok"></p>
+        <pre class="mono sub" id="domain-dns" style="white-space:pre-wrap;margin:8px 0 0"></pre>
+        <p class="sub">将域名 A/AAAA 解析到本机公网入口后检测。飞书网页应用主页用 <code id="domain-hint">https://&lt;域名&gt;/app/</code>，H5 可信域名填主域名。</p>
+      </div>
+
+      <div class="card">
+        <h2 style="margin-top:0;font-size:16px">2. Let's Encrypt 证书</h2>
+        <p class="sub" id="acme-status">加载中…</p>
+        <div class="row" style="margin-top:12px">
+          <button type="button" id="btn-acme">为已绑定域名申请证书</button>
+        </div>
+        <p class="err" id="acme-err"></p>
+        <p class="ok" id="acme-ok"></p>
+        <p class="sub">需已绑定域名且 DNS 可达；防火墙放行 80（校验）与 443。申请后若仍在明文端口，把 LISTEN 改为 0.0.0.0:443 并 restart。</p>
+      </div>
+
+      <div class="card">
+        <h2 style="margin-top:0;font-size:16px">3. 新建租户</h2>
+        <div class="row">
+          <div style="flex:1;min-width:160px">
+            <label>租户 ID（写入 QR 帧头）</label>
+            <input id="new-id" placeholder="acme" />
+          </div>
+          <div style="flex:1;min-width:160px">
+            <label>显示名</label>
+            <input id="new-name" placeholder="Acme 公司" />
+          </div>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <button type="button" id="btn-create">创建并生成注册链接</button>
+        </div>
+        <p class="err" id="create-err"></p>
+        <p class="ok mono" id="create-invite"></p>
+      </div>
+
+      <div class="card">
+        <div class="row" style="justify-content:space-between;margin-bottom:8px">
+          <h2 style="margin:0;font-size:16px">租户列表</h2>
+          <button type="button" class="ghost" id="btn-refresh">刷新</button>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>状态</th>
+              <th>密钥 / 飞书</th>
+              <th>注册</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="tenant-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+  <script src="./admin.js"></script>
+</body>
+</html>

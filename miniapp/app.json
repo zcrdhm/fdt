@@ -1,0 +1,8 @@
+{
+  "pages": ["pages/index/index"],
+  "window": {
+    "navigationBarTitleText": "数据摆渡审批",
+    "navigationBarBackgroundColor": "#1f2329",
+    "navigationBarTextStyle": "white"
+  }
+}

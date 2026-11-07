@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FDT 租户注册</title>
+  <link rel="stylesheet" href="./admin.css" />
+</head>
+<body>
+  <div class="wrap" style="max-width:480px">
+    <h1>租户注册</h1>
+    <p class="sub">设置后台登录账号。注册后请到租户后台上传 PK_内网 并绑定飞书。</p>
+    <section id="bad" class="card hidden"><p class="err">注册链接无效或已过期。</p></section>
+    <section id="form" class="card hidden">
+      <p>租户：<strong id="tid"></strong> <span id="tname" class="sub"></span></p>
+      <label>登录用户名</label>
+      <input id="user" autocomplete="username" />
+      <label>密码（至少 8 位）</label>
+      <input id="pass" type="password" autocomplete="new-password" />
+      <label>联系人</label>
+      <input id="cname" />
+      <label>联系邮箱</label>
+      <input id="cmail" type="email" />
+      <button type="button" id="btn" style="margin-top:16px;width:100%">注册</button>
+      <p class="err" id="err"></p>
+    </section>
+    <section id="done" class="card hidden">
+      <p class="ok">注册成功。</p>
+      <p class="sub">请打开租户后台登录，上传 pem、绑定飞书；设备损坏时可随时回来更新。</p>
+      <p><a id="clink" href="/console/">进入租户后台 /console/</a></p>
+    </section>
+  </div>
+  <script src="./register.js"></script>
+</body>
+</html>

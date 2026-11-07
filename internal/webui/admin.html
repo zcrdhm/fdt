@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FDT Portal 管理后台</title>
+  <link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+  <div class="wrap wrap-wide">
+    <section id="view-login" class="login-card card">
+      <div class="role-switch" role="tablist" aria-label="登录身份">
+        <a class="role-btn" href="/">用户</a>
+        <a class="role-btn on" href="/admin/" aria-current="page">管理员</a>
+      </div>
+      <h2 style="margin:14px 0 8px;font-size:18px">管理员登录</h2>
+      <p class="sub">本地管理员账号（<code>PORTAL_ADMIN_USER</code> / <code>PORTAL_ADMIN_PASSWORD</code>），与域账号相互独立。</p>
+      <label>管理员用户名</label>
+      <input id="login-user" autocomplete="username" />
+      <label>管理员密码</label>
+      <input id="login-pass" type="password" autocomplete="current-password" />
+      <div class="actions">
+        <button type="button" id="btn-login">登录</button>
+      </div>
+      <p class="err" id="login-err"></p>
+    </section>
+
+    <section id="view-app" class="hidden">
+      <div class="top">
+        <div class="brand">
+          <h1>FDT 管理后台</h1>
+          <p>全部记录 · 表单字段 · LDAP · 改密。</p>
+        </div>
+        <div class="nav">
+          <button type="button" class="ghost" id="btn-tab-imports">获取导入</button>
+          <button type="button" class="ghost" id="btn-tab-history">全部记录</button>
+          <button type="button" class="ghost" id="btn-tab-fields">字段管理</button>
+          <button type="button" class="ghost" id="btn-tab-ldap">LDAP 配置</button>
+          <button type="button" class="ghost" id="btn-tab-password">修改密码</button>
+          <a class="btn ghost" href="/">用户 Portal</a>
+          <button type="button" class="danger" id="btn-logout">退出</button>
+        </div>
+      </div>
+
+      <div class="card who">
+        <div>
+          <div id="who-line">本地管理员</div>
+          <div class="hint-line" id="who-sub"></div>
+        </div>
+        <span class="badge live" id="mode-badge">admin</span>
+      </div>
+
+      <section id="panel-imports" class="hidden">
+        <div class="card">
+          <div class="hist-head">
+            <div>
+              <h2>获取导入数据</h2>
+              <p class="sub" id="imports-scope">全部用户已释放的导入包，可直接下载 ZIP。</p>
+            </div>
+            <button type="button" class="ghost" id="btn-imports-refresh">刷新</button>
+          </div>
+          <p class="err" id="imports-err"></p>
+          <p class="hint-line hidden" id="imports-empty">暂无可下载的导入包。</p>
+          <div class="hist-list" id="imports-list"></div>
+        </div>
+      </section>
+
+      <section id="panel-history">
+        <div class="card">
+          <div class="hist-head">
+            <div>
+              <h2>全部申请记录</h2>
+              <p class="sub" id="hist-scope">管理员可查看所有用户的申请。已释放导入也可在「获取导入」下载。</p>
+            </div>
+            <button type="button" class="ghost" id="btn-hist-refresh">刷新</button>
+          </div>
+          <p class="err" id="hist-err"></p>
+          <p class="hint-line hidden" id="hist-empty">暂无记录</p>
+          <div class="hist-list" id="hist-list"></div>
+        </div>
+      </section>
+
+      <section id="panel-fields" class="hidden">
+        <div class="card">
+          <div class="hist-head">
+            <div>
+              <h2>提交表单字段</h2>
+              <p class="sub">配置用户 Portal 表单项。飞书对应由 <code>Key</code> / 类型自动生成（<code>cls</code>→<code>class</code>）；导出 JSON 后把控件 <code>id</code> 改成飞书后台真实 id 即可。</p>
+            </div>
+            <div class="actions" style="margin:0">
+              <button type="button" class="ghost" id="btn-field-add">添加字段</button>
+              <button type="button" id="btn-fields-save">保存</button>
+              <a class="btn ghost" id="btn-feishu-export" href="/api/settings/form-fields/feishu-export">导出飞书表单 JSON</a>
+            </div>
+          </div>
+          <p class="err" id="fields-err"></p>
+          <p class="ok" id="fields-ok"></p>
+          <div class="fields-table-wrap">
+            <table class="fields-table" id="fields-table">
+              <thead>
+                <tr>
+                  <th>启用</th><th>顺序</th><th>Key</th><th>标签</th><th>类型</th><th>来源</th>
+                  <th>必填</th><th>选项/默认</th><th></th>
+                </tr>
+              </thead>
+              <tbody id="fields-body"></tbody>
+            </table>
+          </div>
+          <p class="hint-line" style="margin-top:12px">飞书表单预览（自动生成，保存后更新）</p>
+          <pre class="mono" id="feishu-preview" style="margin-top:6px"></pre>
+        </div>
+      </section>
+
+      <section id="panel-password" class="hidden">
+        <div class="card">
+          <h2>修改管理员密码</h2>
+          <p class="sub">修改本地管理员（<code id="pwd-admin-user">admin</code>）密码，写入 <code>PORTAL_ADMIN_PASSWORD</code>，立即生效且重启后保留。</p>
+          <label>当前密码</label>
+          <input id="pwd-old" type="password" autocomplete="current-password" />
+          <label>新密码（至少 8 位）</label>
+          <input id="pwd-new" type="password" autocomplete="new-password" />
+          <label>确认新密码</label>
+          <input id="pwd-new2" type="password" autocomplete="new-password" />
+          <div class="actions">
+            <button type="button" id="btn-pwd-save">保存新密码</button>
+          </div>
+          <p class="err" id="pwd-err"></p>
+          <p class="ok" id="pwd-ok"></p>
+        </div>
+      </section>
+
+      <section id="panel-ldap" class="hidden">
+        <div class="card">
+          <h2>LDAP / AD 配置</h2>
+          <p class="sub">保存到 <code>/etc/fdt/ldap.json</code>，可热切换身份源。生产请用 LDAPS 或 StartTLS。</p>
+          <label class="check"><input type="checkbox" id="ldap-enabled" /> 启用 LDAP（关闭则回退 mock）</label>
+          <label>LDAP URL</label>
+          <input id="ldap-url" placeholder="ldaps://dc.corp.example:636" />
+          <label class="check"><input type="checkbox" id="ldap-starttls" /> StartTLS（ldap:// 时）</label>
+          <label class="check"><input type="checkbox" id="ldap-insecure" /> 跳过证书校验（仅联调）</label>
+          <label>Search Base</label>
+          <input id="ldap-base" placeholder="DC=corp,DC=example" />
+          <label>服务账号 Bind DN</label>
+          <input id="ldap-bind-dn" placeholder="CN=fdt-svc,OU=Service,DC=corp,DC=example" />
+          <label>服务账号密码</label>
+          <input id="ldap-bind-pass" type="password" placeholder="已保存则可留空" autocomplete="off" />
+          <label>搜索过滤器（%s = 登录名）</label>
+          <input id="ldap-filter" placeholder="(sAMAccountName=%s)" />
+          <div class="row">
+            <div><label>姓名属性</label><input id="ldap-attr-name" placeholder="displayName" /></div>
+            <div><label>工号属性</label><input id="ldap-attr-id" placeholder="employeeID" /></div>
+          </div>
+          <div class="row">
+            <div><label>部门属性</label><input id="ldap-attr-dept" placeholder="department" /></div>
+            <div><label>邮箱属性</label><input id="ldap-attr-mail" placeholder="mail" /></div>
+          </div>
+          <h2 style="margin-top:20px;font-size:15px">连接测试</h2>
+          <div class="row">
+            <div><label>测试用户</label><input id="ldap-test-user" /></div>
+            <div><label>测试密码</label><input id="ldap-test-pass" type="password" /></div>
+          </div>
+          <div class="actions">
+            <button type="button" id="btn-ldap-save">保存配置</button>
+            <button type="button" class="ghost" id="btn-ldap-test">测试登录</button>
+          </div>
+          <p class="err" id="ldap-err"></p>
+          <p class="ok" id="ldap-ok"></p>
+          <pre class="mono hidden" id="ldap-test-out" style="margin-top:12px"></pre>
+        </div>
+      </section>
+    </section>
+  </div>
+
+  <div class="modal-mask hidden" id="hist-detail" role="dialog" aria-modal="true">
+    <div class="modal-card qr-modal-card">
+      <div class="modal-head">
+        <div>
+          <div class="modal-title">申请详情</div>
+          <div class="hint-line">申请单 <span class="badge live" id="hist-reqid"></span></div>
+        </div>
+        <button type="button" class="ghost" id="btn-hist-close">关闭</button>
+      </div>
+      <div class="hint-line" id="hist-detail-meta"></div>
+      <img class="qr" id="hist-qr" alt="QR#1" />
+      <label>事由 / 状态</label>
+      <pre class="mono" id="hist-detail-body"></pre>
+      <p class="ok hidden" id="hist-download-hint">导入已释放，可下载 ZIP 包。</p>
+      <div class="modal-actions">
+        <a class="btn ghost hidden" id="btn-hist-download" href="#">下载导入包</a>
+        <button type="button" id="btn-hist-ok">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/admin.js"></script>
+</body>
+</html>

@@ -1,0 +1,38 @@
+<view class="page">
+  <block tt:if="{{step === 'idle'}}">
+    <view class="hero">
+      <view class="title">数据摆渡审批</view>
+      <view class="desc">扫描内网 Portal 生成的申请二维码（QR#1），发起飞书审批。</view>
+    </view>
+    <button class="primary" bindtap="scanQR1">扫码发起审批</button>
+  </block>
+
+  <block tt:if="{{step === 'submitting'}}">
+    <view class="status">正在校验令牌并提交审批…</view>
+  </block>
+
+  <block tt:if="{{step === 'pending'}}">
+    <view class="card">
+      <view class="row"><text class="k">申请单</text><text class="v">{{reqId}}</text></view>
+      <view class="row"><text class="k">审批实例</text><text class="v">{{instanceId}}</text></view>
+      <view class="row"><text class="k">状态</text><text class="v">{{status}}</text></view>
+    </view>
+    <view class="manifest">
+      <view class="mt">审批人可见清单</view>
+      <text class="mono" user-select>{{manifestText}}</text>
+    </view>
+    <view class="hint">请在飞书审批中处理，审批通过后此处将显示放行二维码（QR#2）。</view>
+  </block>
+
+  <block tt:if="{{step === 'done'}}">
+    <view class="done-title">审批通过 · 放行二维码</view>
+    <image class="qr" src="{{qr2Url}}" mode="widthFix" show-menu-by-longpress="{{false}}" />
+    <view class="hint">持此二维码到摆渡终端：先插入U盘，再扫码取数。</view>
+    <button class="ghost" bindtap="reset">开始新的摆渡</button>
+  </block>
+
+  <block tt:if="{{step === 'error'}}">
+    <view class="error">{{error}}</view>
+    <button class="ghost" bindtap="reset">返回</button>
+  </block>
+</view>

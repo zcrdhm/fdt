@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FDT 租户后台</title>
+  <link rel="stylesheet" href="./console.css" />
+</head>
+<body>
+  <div class="wrap">
+    <h1>租户后台</h1>
+    <p class="sub">上传 / 更新 PK_内网、绑定飞书、下载 PK_网关。内网设备损坏后可随时重新配置。</p>
+
+    <section id="login-view" class="card">
+      <div class="role-switch" role="tablist" aria-label="登录身份">
+        <a class="role-btn" href="/admin/">管理员</a>
+        <a class="role-btn on" href="/console/" aria-current="page">租户</a>
+      </div>
+      <h2 style="margin:14px 0 8px;font-size:16px">租户登录</h2>
+      <p class="sub" style="margin:0 0 8px">客户侧：上传 PK_内网、绑定飞书、下载 PK_网关。</p>
+      <label>用户名</label>
+      <input id="login-user" autocomplete="username" />
+      <label>密码</label>
+      <input id="login-pass" type="password" autocomplete="current-password" />
+      <button type="button" id="btn-login" style="margin-top:14px">登录</button>
+      <p class="err" id="login-err"></p>
+    </section>
+
+    <section id="app-view" class="hidden">
+      <div class="card row" style="justify-content:space-between">
+        <div>
+          <strong id="who"></strong>
+          <span class="badge" id="status"></span>
+          <div class="sub" id="meta-line"></div>
+        </div>
+        <button type="button" class="ghost" id="btn-logout">退出</button>
+      </div>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <h2 style="margin-top:0;font-size:16px">1. 上传 PK_内网 <span class="badge" id="pk-badge">未上传</span></h2>
+          <p class="sub">内网 install 生成的 <code>pk_internal.pem</code>。已上传后仍可选择新文件覆盖。</p>
+          <p class="ok" id="pk-status" style="margin:8px 0">当前状态：未上传</p>
+          <input type="file" id="pk-file" accept=".pem,*" />
+          <button type="button" id="btn-pk" style="margin-top:12px">上传</button>
+          <p class="err" id="pk-err"></p>
+          <p class="ok" id="pk-ok"></p>
+        </div>
+
+        <div class="card">
+          <h2 style="margin-top:0;font-size:16px">2. 绑定审批渠道 <span class="badge" id="feishu-badge">未绑定</span></h2>
+          <p class="ok" id="feishu-status" style="margin:0 0 8px">当前状态：未绑定</p>
+          <p class="sub" id="feishu-hint">密钥类字段不会回显；已绑定后留空再保存 = 保持原值不变。</p>
+          <label>审批渠道</label>
+          <select id="provider">
+            <option value="feishu">飞书</option>
+            <option value="dingtalk">钉钉（即将支持）</option>
+            <option value="wecom">企业微信（即将支持）</option>
+          </select>
+          <p class="sub" id="provider-note" style="margin:6px 0 0"></p>
+          <label class="check" style="display:flex;gap:8px;align-items:center;margin-top:10px">
+            <input type="checkbox" id="mock" style="width:auto" /> 联调 mock（自动审批）
+          </label>
+          <div id="feishu-fields">
+            <label id="lbl-app-id">App ID</label><input id="appId" />
+            <label id="lbl-app-secret">App Secret <span class="sub" id="hint-secret"></span></label><input id="appSecret" type="password" placeholder="已保存则可不填" autocomplete="off" />
+            <label id="lbl-code-export">导出审批定义 Code</label><input id="approvalCode" placeholder="dir=export" />
+            <label id="lbl-code-import">导入审批定义 Code</label><input id="approvalCodeImport" placeholder="dir=import；可与导出不同" />
+            <div id="callback-fields">
+              <label id="lbl-enc">Encrypt Key <span class="sub" id="hint-enc"></span></label><input id="encryptKey" placeholder="已保存则可不填" autocomplete="off" />
+              <label id="lbl-tok">Verification Token <span class="sub" id="hint-tok"></span></label><input id="verificationToken" placeholder="已保存则可不填" autocomplete="off" />
+            </div>
+          </div>
+          <button type="button" id="btn-feishu" style="margin-top:12px">保存渠道配置</button>
+          <p class="err" id="feishu-err"></p>
+          <p class="ok" id="feishu-ok"></p>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2 style="margin-top:0;font-size:16px">3. PK_网关（给 ATM）</h2>
+        <p class="sub">下载后放入 ATM 信任链。轮换密钥后须重新下载并更新所有 ATM。</p>
+        <div class="row">
+          <button type="button" id="btn-dl">下载 pk_gateway.pem</button>
+          <button type="button" class="ghost" id="btn-regen">重新生成网关密钥对</button>
+        </div>
+        <p class="sub" id="cb" style="margin-top:12px"></p>
+      </div>
+
+      <div class="card">
+        <h2 style="margin-top:0;font-size:16px">资料 / 改密</h2>
+        <label>显示名</label><input id="dname" />
+        <label>联系人</label><input id="cname" />
+        <label>邮箱</label><input id="cmail" />
+        <label>备注</label><textarea id="notes" rows="2"></textarea>
+        <button type="button" id="btn-profile" style="margin-top:12px">保存资料</button>
+        <hr style="border:none;border-top:1px solid var(--line);margin:20px 0" />
+        <label>旧密码</label><input id="old-pass" type="password" />
+        <label>新密码</label><input id="new-pass" type="password" />
+        <button type="button" class="ghost" id="btn-pass" style="margin-top:12px">修改密码</button>
+        <p class="err" id="prof-err"></p>
+        <p class="ok" id="prof-ok"></p>
+      </div>
+    </section>
+  </div>
+  <script src="./console.js"></script>
+</body>
+</html>

@@ -1,0 +1,44 @@
+{
+  "releaseTTL": "72h",
+  "jsapiAppId": "cli_shared_webapp_xxx",
+  "jsapiAppSecret": "共享网页应用 App Secret（扫码 JSAPI；可与某租户应用相同）",
+  "tenants": [
+    {
+      "id": "acme",
+      "internalPub": "./acme/pk_internal.pem",
+      "gatewayKey": "./acme/sk_gateway.pem",
+      "feishu": {
+        "mode": "live",
+        "provider": "feishu",
+        "appId": "cli_acme_xxx",
+        "appSecret": "从 secrets 注入，勿明文提交",
+        "approvalCode": "ACME-EXPORT-APPROVAL-CODE",
+        "approvalCodeImport": "ACME-IMPORT-APPROVAL-CODE",
+        "encryptKey": "从 secrets 注入",
+        "verificationToken": "从 secrets 注入",
+        "feishuTenantKey": "acme 的飞书组织 tenant_key"
+      }
+    },
+    {
+      "id": "beta",
+      "internalPub": "./beta/pk_internal.pem",
+      "gatewayKey": "./beta/sk_gateway.pem",
+      "feishu": {
+        "mode": "live",
+        "appId": "cli_beta_xxx",
+        "appSecret": "从 secrets 注入，勿明文提交",
+        "approvalCode": "BETA-EXPORT-APPROVAL-CODE",
+        "approvalCodeImport": "BETA-IMPORT-APPROVAL-CODE",
+        "encryptKey": "从 secrets 注入",
+        "verificationToken": "从 secrets 注入",
+        "feishuTenantKey": "beta 的飞书组织 tenant_key"
+      }
+    },
+    {
+      "id": "trial",
+      "internalPub": "./trial/pk_internal.pem",
+      "gatewayKey": "./trial/sk_gateway.pem",
+      "feishu": { "mode": "mock", "autoApprove": true, "approver": "mock-approver" }
+    }
+  ]
+}

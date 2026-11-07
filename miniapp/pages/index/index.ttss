@@ -1,0 +1,18 @@
+.page { padding: 32rpx; }
+.hero { margin: 40rpx 0; }
+.title { font-size: 40rpx; font-weight: 600; color: #1f2329; }
+.desc { margin-top: 12rpx; font-size: 26rpx; color: #646a73; line-height: 1.6; }
+.primary { margin-top: 40rpx; background: #3370ff; color: #fff; border-radius: 12rpx; font-size: 30rpx; }
+.ghost { margin-top: 32rpx; background: #f2f3f5; color: #1f2329; border-radius: 12rpx; font-size: 28rpx; }
+.status { margin-top: 60rpx; text-align: center; color: #646a73; font-size: 28rpx; }
+.card { background: #f7f8fa; border-radius: 12rpx; padding: 24rpx; }
+.row { display: flex; justify-content: space-between; padding: 10rpx 0; font-size: 26rpx; }
+.row .k { color: #8f959e; }
+.row .v { color: #1f2329; font-family: monospace; }
+.manifest { margin-top: 24rpx; }
+.mt { font-size: 26rpx; color: #8f959e; margin-bottom: 8rpx; }
+.mono { display: block; white-space: pre-wrap; font-family: monospace; font-size: 22rpx; color: #1f2329; background: #fff; border: 1rpx solid #e5e6eb; border-radius: 8rpx; padding: 16rpx; }
+.hint { margin-top: 24rpx; font-size: 24rpx; color: #8f959e; line-height: 1.6; }
+.done-title { font-size: 34rpx; font-weight: 600; text-align: center; margin: 24rpx 0; color: #1f2329; }
+.qr { display: block; width: 480rpx; margin: 0 auto; }
+.error { margin-top: 60rpx; text-align: center; color: #f54a45; font-size: 28rpx; }

@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FDT 内网 Portal</title>
+  <link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+  <div class="wrap">
+    <section id="view-login" class="login-card card hidden">
+      <div class="role-switch" role="tablist" aria-label="登录身份">
+        <a class="role-btn on" href="/" aria-current="page">用户</a>
+        <a class="role-btn" href="/admin/">管理员</a>
+      </div>
+      <h2 style="margin:14px 0 8px;font-size:18px">用户登录</h2>
+      <p class="sub">使用域账号 / mock 账号登录。退出后需重新登录。</p>
+      <label>用户名</label>
+      <input id="login-user" autocomplete="username" />
+      <label>密码</label>
+      <input id="login-pass" type="password" autocomplete="current-password" />
+      <div class="actions">
+        <button type="button" id="btn-login">登录</button>
+      </div>
+      <p class="err" id="login-err"></p>
+      <p class="hint-line">联调 mock：zhangsan / pass123</p>
+    </section>
+
+    <section id="view-app" class="hidden">
+      <div class="top">
+        <div class="brand">
+          <h1>FDT 内网 Portal</h1>
+          <p>离线侧上传与签发 QR#1。申请人身份来自目录；飞书用户 ID 可单独绑定。</p>
+        </div>
+        <div class="nav">
+          <button type="button" class="ghost" id="btn-tab-export">发起导出</button>
+          <button type="button" class="ghost" id="btn-tab-imports">获取导入</button>
+          <button type="button" class="ghost" id="btn-tab-history">历史记录</button>
+          <button type="button" class="ghost" id="btn-tab-bind">飞书 ID</button>
+          <a class="btn ghost" href="/admin/">管理后台</a>
+          <button type="button" class="danger" id="btn-logout">退出</button>
+        </div>
+      </div>
+
+      <div class="card who">
+        <div>
+          <div id="who-line">未登录</div>
+          <div class="hint-line" id="who-sub"></div>
+        </div>
+        <span class="badge" id="mode-badge">—</span>
+      </div>
+      <div class="card warn-banner hidden" id="feishu-bind-banner">
+        <div>
+          <b>尚未绑定飞书 ID</b>
+          <p class="sub" style="margin:6px 0 0">发起导出前必须先绑定飞书用户 ID，否则无法生成申请二维码。</p>
+        </div>
+        <button type="button" id="btn-goto-bind">去绑定</button>
+      </div>
+
+      <section id="panel-export">
+        <div class="card">
+          <h2>发起摆渡申请</h2>
+          <p class="sub">上传文件 → 生成清单 → 签发 QR#1，再用飞书网页应用扫码。表单字段由管理后台配置。</p>
+          <div id="dynamic-fields"></div>
+          <label>选择文件</label>
+          <div class="file-picker">
+            <input id="files" type="file" multiple class="file-input" />
+            <button type="button" class="ghost" id="btn-pick">选择文件</button>
+            <button type="button" class="ghost hidden" id="btn-clear-files">清空</button>
+            <span class="file-summary" id="file-summary">未选择任何文件</span>
+          </div>
+          <div class="file-list hidden" id="file-list"></div>
+          <label>或服务端目录（开发用）</label>
+          <input id="srcdir" placeholder="/var/lib/fdt/uploads/xxx" />
+          <div class="actions">
+            <button type="button" id="btn-go">生成申请二维码</button>
+          </div>
+          <p class="err" id="err"></p>
+          <p class="ok hidden" id="export-ok"></p>
+        </div>
+      </section>
+
+      <section id="panel-imports" class="hidden">
+        <div class="card">
+          <div class="hist-head">
+            <div>
+              <h2>获取导入数据</h2>
+              <p class="sub" id="imports-scope">ATM 导入并释放成功后，在此下载 ZIP 到本机。仅显示「已导入释放」且可下载的申请。</p>
+            </div>
+            <button type="button" class="ghost" id="btn-imports-refresh">刷新</button>
+          </div>
+          <p class="err" id="imports-err"></p>
+          <p class="hint-line hidden" id="imports-empty">暂无可下载的导入包。请先在 ATM 完成导入兑付。</p>
+          <div class="hist-list" id="imports-list"></div>
+        </div>
+      </section>
+
+      <section id="panel-history" class="hidden">
+        <div class="card">
+          <div class="hist-head">
+            <div>
+              <h2>历史记录</h2>
+              <p class="sub" id="hist-scope">显示本人申请。已释放的导入也可在「获取导入」页下载，或点开详情下载。</p>
+            </div>
+            <button type="button" class="ghost" id="btn-hist-refresh">刷新</button>
+          </div>
+          <p class="err" id="hist-err"></p>
+          <p class="hint-line hidden" id="hist-empty">暂无记录</p>
+          <div class="hist-list" id="hist-list"></div>
+        </div>
+      </section>
+
+      <section id="panel-bind" class="hidden">
+        <div class="card">
+          <h2>绑定飞书用户 ID</h2>
+          <p class="sub">写入 QR#1 的申请人 ID。填管理后台「用户 ID」（user_id）或 open_id，须与网关 <code>userIdType</code> 一致。</p>
+          <label>当前目录工号 / ID</label>
+          <input id="bind-dir-id" readonly />
+          <label>飞书用户 ID</label>
+          <input id="bind-feishu" placeholder="例如 g976f94f" />
+          <div class="actions">
+            <button type="button" id="btn-bind">保存绑定</button>
+            <button type="button" class="ghost" id="btn-unbind">清除绑定</button>
+          </div>
+          <p class="err" id="bind-err"></p>
+          <p class="ok" id="bind-ok"></p>
+        </div>
+      </section>
+
+    </section>
+  </div>
+
+  <div class="modal-mask hidden" id="qr-modal" role="dialog" aria-modal="true">
+    <div class="modal-card qr-modal-card">
+      <div class="modal-head">
+        <div>
+          <div class="modal-title">申请二维码 QR#1</div>
+          <div class="hint-line">申请单 <span class="badge live" id="reqid"></span> · 模式 <span class="badge" id="mode"></span></div>
+        </div>
+        <button type="button" class="ghost" id="btn-qr-close">关闭</button>
+      </div>
+      <img class="qr" id="qr" alt="QR#1" />
+      <div class="hint-line" id="summary"></div>
+      <label>DLP / 清单摘要</label>
+      <pre class="mono" id="manifest"></pre>
+      <div class="modal-actions">
+        <button type="button" id="btn-qr-ok">知道了</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-mask hidden" id="hist-detail" role="dialog" aria-modal="true">
+    <div class="modal-card qr-modal-card">
+      <div class="modal-head">
+        <div>
+          <div class="modal-title">申请详情</div>
+          <div class="hint-line">申请单 <span class="badge live" id="hist-reqid"></span></div>
+        </div>
+        <button type="button" class="ghost" id="btn-hist-close">关闭</button>
+      </div>
+      <div class="hint-line" id="hist-detail-meta"></div>
+      <img class="qr" id="hist-qr" alt="QR#1" />
+      <label>事由 / 状态</label>
+      <pre class="mono" id="hist-detail-body"></pre>
+      <p class="ok hidden" id="hist-download-hint">导入已释放，可下载 ZIP 包到本机。</p>
+      <div class="modal-actions">
+        <a class="btn ghost hidden" id="btn-hist-download" href="#">下载导入包</a>
+        <button type="button" id="btn-hist-ok">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

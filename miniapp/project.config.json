@@ -1,0 +1,12 @@
+{
+  "miniprogramRoot": "./",
+  "projectname": "fdt-ferry",
+  "description": "离线数据摆渡：扫 QR#1 → 飞书审批 → 展示 QR#2",
+  "appid": "请替换为飞书小程序 App ID",
+  "setting": {
+    "urlCheck": true,
+    "es6": true,
+    "minified": true
+  },
+  "compileType": "miniprogram"
+}

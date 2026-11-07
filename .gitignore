@@ -1,0 +1,27 @@
+# keys and databases (never commit)
+keys/
+*.pem
+*.db
+*.db-wal
+*.db-shm
+staging/
+quarantine/
+released/
+
+# local / secrets
+.env
+.env.*
+*.env
+!.env.example
+config/tenants.json
+
+# binaries / build
+/fdt-portal
+/fdt-gateway
+/fdt-atm
+/fdt-keygen
+/fdt-demo
+bin/
+dist/
+*.tar.gz
+/fdt

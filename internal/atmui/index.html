@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>FDT ATM 摆渡终端</title>
+  <link rel="stylesheet" href="/app.css" />
+</head>
+<body class="maint-mode">
+  <div class="maint-bar" id="maint-bar">
+    <div class="maint-bar-main">
+      <span class="maint-badge">维护模式</span>
+      <span class="hint" id="maint-hint">当前为维护模式。点「退出维护模式」将启动 Chromium 锁屏窗口（--kiosk，可挡 Esc）；仅能通过右下角「维护」+ 密码回到维护界面。</span>
+    </div>
+    <div class="maint-bar-actions">
+      <button type="button" class="primary" id="btn-exit-maint">退出维护模式</button>
+      <button type="button" class="ghost" id="btn-change-maint-pass">修改维护密码</button>
+    </div>
+  </div>
+
+  <button type="button" class="maint-fab hidden" id="btn-enter-maint" title="进入维护模式">维护</button>
+
+  <div class="shell">
+    <header class="top">
+      <div>
+        <div class="brand">FDT ATM</div>
+        <div class="sub" id="device-line">摆渡终端</div>
+      </div>
+      <div class="tabs">
+        <button type="button" class="tab on" data-tab="export">导出兑付</button>
+        <button type="button" class="tab" data-tab="import">导入</button>
+      </div>
+    </header>
+
+    <div class="status-card" id="status-card">
+      <div class="status-main">
+        <div class="state" id="state-label">检测中…</div>
+        <div class="usb" id="usb-line">U 盘：—</div>
+        <div class="msg" id="msg-line"></div>
+        <div class="prog hidden" id="prog-wrap"><div class="bar" id="prog-bar"></div></div>
+      </div>
+      <div class="status-actions">
+        <button type="button" class="ghost status-detect" id="btn-usb-detect">手动检测</button>
+        <button type="button" class="ghost status-eject" id="btn-usb-eject" disabled>安全拔出</button>
+      </div>
+    </div>
+
+    <section id="panel-export" class="panel">
+      <h2>导出 · 扫 QR#2 写 U 盘</h2>
+      <p class="hint">请先插入 U 盘，再点「扫码」对准飞书放行码（QR#2）。会弹出预览窗，识别后自动兑付。</p>
+      <div class="actions">
+        <button type="button" class="primary" id="btn-cam-scan">扫码</button>
+      </div>
+      <label>或粘贴令牌</label>
+      <textarea id="frame" rows="3" placeholder="FDT1...."></textarea>
+      <div class="actions">
+        <button type="button" class="primary" id="btn-redeem" disabled>手动兑付到 U 盘</button>
+      </div>
+      <div class="redeem-box hidden" id="redeem-box">
+        <div class="redeem-path" id="redeem-path"></div>
+        <div class="redeem-file" id="redeem-file"></div>
+        <div class="prog" id="redeem-prog-wrap"><div class="bar" id="redeem-prog-bar"></div></div>
+        <div class="redeem-pct" id="redeem-pct"></div>
+        <ul class="file-names" id="redeem-files"></ul>
+      </div>
+      <pre class="out" id="export-out"></pre>
+    </section>
+
+    <section id="panel-import" class="panel hidden">
+      <h2>导入 · U 盘 → 内网</h2>
+      <p class="hint">插源盘 → 勾选文件 → 生成 QR#1 → 用飞书扫码（当前飞书账号即申请人）→ 审批通过后扫 QR#2 完成导入。ATM 无需登录或填写飞书 ID。</p>
+      <label>事由</label>
+      <input id="imp-reason" value="导入资料" />
+      <label>密级</label>
+      <select id="imp-cls">
+        <option value="internal">internal</option>
+        <option value="confidential" selected>confidential</option>
+        <option value="secret">secret</option>
+      </select>
+      <label>从 U 盘选择</label>
+      <div class="usb-picker" id="usb-picker">
+        <div class="usb-picker-bar">
+          <button type="button" class="ghost" id="btn-usb-browse" disabled>浏览 U 盘</button>
+          <button type="button" class="ghost" id="btn-usb-clear" disabled>清空选择</button>
+          <span class="file-summary" id="imp-select-summary">未选择 · 请先插入 U 盘</span>
+        </div>
+        <div class="usb-browser hidden" id="usb-browser">
+          <div class="usb-path" id="usb-path">/</div>
+          <div class="usb-entries" id="usb-entries"></div>
+        </div>
+        <ul class="file-names" id="imp-selected"></ul>
+      </div>
+      <div class="actions">
+        <button type="button" class="primary" id="btn-import-start" disabled>生成 QR#1</button>
+        <button type="button" class="ghost hidden" id="btn-import-show-qr">查看 QR#1</button>
+      </div>
+      <div id="import-complete" class="hidden">
+        <div class="hint" id="import-meta"></div>
+        <label>扫 QR#2 完成导入</label>
+        <textarea id="imp-frame" rows="3" placeholder="FDT1...."></textarea>
+        <div class="actions">
+          <button type="button" class="primary" id="btn-import-done">完成导入</button>
+          <button type="button" class="ghost" id="btn-import-cam">扫码</button>
+        </div>
+      </div>
+      <pre class="out" id="import-out"></pre>
+    </section>
+  </div>
+
+  <div class="modal-mask hidden" id="modal-mask" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-card" id="modal-card">
+      <div class="modal-title" id="modal-title">提示</div>
+      <div class="modal-body" id="modal-body"></div>
+      <div class="modal-actions">
+        <button type="button" class="primary" id="modal-ok">知道了</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-mask hidden" id="maint-pass-modal" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <div class="modal-title" id="maint-pass-title">进入维护模式</div>
+      <p class="hint" id="maint-pass-hint">请输入维护密码以退出全屏。</p>
+      <label>维护密码</label>
+      <input id="maint-pass-input" type="password" autocomplete="current-password" />
+      <div id="maint-pass-extra" class="hidden">
+        <label>新密码</label>
+        <input id="maint-pass-new" type="password" autocomplete="new-password" />
+        <label>确认新密码</label>
+        <input id="maint-pass-new2" type="password" autocomplete="new-password" />
+      </div>
+      <p class="hint" id="maint-pass-err" style="color:var(--bad)"></p>
+      <div class="modal-actions">
+        <button type="button" class="ghost" id="maint-pass-cancel">取消</button>
+        <button type="button" class="primary" id="maint-pass-ok">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-mask hidden" id="import-qr-modal" role="dialog" aria-modal="true">
+    <div class="modal-card cam-modal-card">
+      <div class="cam-modal-head">
+        <div class="modal-title">导入申请 QR#1</div>
+        <button type="button" class="ghost" id="btn-import-qr-close">关闭</button>
+      </div>
+      <p class="hint" id="import-qr-hint">请用飞书网页应用扫码发起审批。</p>
+      <img id="import-qr" alt="QR#1" />
+      <div class="hint" id="import-qr-meta"></div>
+      <div class="modal-actions cam-modal-actions">
+        <button type="button" class="primary" id="btn-import-qr-ok">知道了</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-mask hidden" id="cam-modal" role="dialog" aria-modal="true" aria-labelledby="cam-modal-title">
+    <div class="modal-card cam-modal-card">
+      <div class="cam-modal-head">
+        <div class="modal-title" id="cam-modal-title">扫码兑付</div>
+        <button type="button" class="ghost" id="btn-cam-close">关闭</button>
+      </div>
+      <p class="hint" id="cam-modal-hint">请将飞书放行码（QR#2）对准框内，识别成功后自动兑付。</p>
+      <div class="cam-box">
+        <video id="cam" playsinline muted></video>
+        <canvas id="cam-canvas" class="hidden"></canvas>
+        <div class="cam-overlay" id="cam-hint">正在打开摄像头…</div>
+      </div>
+      <div class="modal-actions cam-modal-actions">
+        <button type="button" class="ghost" id="btn-cam-cancel">取消扫码</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/jsQR.min.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

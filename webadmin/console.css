@@ -1,0 +1,6 @@
+@import url('./admin.css');
+.grid { display: grid; gap: 16px; }
+@media (min-width: 800px) {
+  .grid-2 { grid-template-columns: 1fr 1fr; }
+}
+.status-line { font-size: 14px; margin-bottom: 8px; }
