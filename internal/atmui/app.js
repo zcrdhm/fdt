@@ -726,6 +726,12 @@
 
   let camPurpose = 'export'; // export | import
   let serverScanCtrl = null;
+  // 摄像头最长开启时间：超时自动关闭，防恶意常开。
+  const CAM_SCAN_MAX_MS = 60000;
+  let camDeadlineTimer = null;
+  let camCountdownTimer = null;
+  let camOpenedAt = 0;
+  let camTimedOut = false;
 
   function setScanBtn(on) {
     [['btn-cam-scan', '扫码'], ['btn-import-cam', '扫码']].forEach(([id, label]) => {
@@ -746,6 +752,41 @@
     if (m) m.classList.add('hidden');
   }
 
+  function baseCamHint() {
+    return camPurpose === 'import'
+      ? '请将审批后的放行码（QR#2）对准框内。无需 U 盘，识别后自动放行隔离区数据。'
+      : '请将飞书放行码（QR#2）对准框内，识别成功后自动兑付到 U 盘。';
+  }
+
+  function clearCamDeadline() {
+    if (camDeadlineTimer) { clearTimeout(camDeadlineTimer); camDeadlineTimer = null; }
+    if (camCountdownTimer) { clearInterval(camCountdownTimer); camCountdownTimer = null; }
+  }
+
+  function camSecondsLeft() {
+    return Math.max(0, Math.ceil((CAM_SCAN_MAX_MS - (Date.now() - camOpenedAt)) / 1000));
+  }
+
+  function updateCamCountdown(extra) {
+    const left = camSecondsLeft();
+    const hint = $('cam-modal-hint');
+    if (!hint) return;
+    const base = extra || baseCamHint();
+    hint.textContent = base + ' · 剩余 ' + left + ' 秒（超时自动关闭摄像头）';
+  }
+
+  function armCamDeadline() {
+    clearCamDeadline();
+    camTimedOut = false;
+    camOpenedAt = Date.now();
+    updateCamCountdown();
+    camCountdownTimer = setInterval(() => updateCamCountdown(), 1000);
+    camDeadlineTimer = setTimeout(() => {
+      camTimedOut = true;
+      stopCam('扫码超时（60 秒内未识别），摄像头已关闭。请重新点「扫码」');
+    }, CAM_SCAN_MAX_MS);
+  }
+
   function prepareCamModal() {
     openCamModal();
     $('cam-hint').classList.remove('off');
@@ -754,9 +795,7 @@
       $('cam-modal-title').textContent = camPurpose === 'import' ? '导入兑付 · 扫 QR#2' : '导出兑付 · 扫 QR#2';
     }
     if ($('cam-modal-hint')) {
-      $('cam-modal-hint').textContent = camPurpose === 'import'
-        ? '请将审批后的放行码（QR#2）对准框内。无需 U 盘，识别后自动放行隔离区数据。'
-        : '请将飞书放行码（QR#2）对准框内，识别成功后自动兑付到 U 盘。';
+      $('cam-modal-hint').textContent = baseCamHint() + ' · 最长 60 秒';
     }
   }
 
@@ -796,6 +835,7 @@
         await v.play();
         camOn = true;
         $('cam-hint').classList.add('off');
+        armCamDeadline();
         scanTimer = setInterval(tickScan, 350);
         return;
       } catch (e) {
@@ -807,13 +847,13 @@
         $('cam-hint').classList.remove('off');
         $('cam-hint').textContent = '浏览器无法打开摄像头，改用本机识别…';
         if ($('cam-modal-hint')) {
-          $('cam-modal-hint').textContent = '请将 QR#2 对准本机摄像头（约 45 秒），识别后自动继续。';
+          $('cam-modal-hint').textContent = '请将 QR#2 对准本机摄像头（最长 60 秒），识别后自动继续。';
         }
       }
     } else {
       $('cam-hint').textContent = '改用本机摄像头识别…';
       if ($('cam-modal-hint')) {
-        $('cam-modal-hint').textContent = '请将 QR#2 对准本机摄像头（约 45 秒），识别后自动继续。';
+        $('cam-modal-hint').textContent = '请将 QR#2 对准本机摄像头（最长 60 秒），识别后自动继续。';
       }
     }
     await serverScanFallback();
@@ -822,26 +862,45 @@
   async function serverScanFallback() {
     serverScanCtrl = new AbortController();
     const out = camPurpose === 'import' ? $('import-out') : $('export-out');
-    if (out) out.textContent = '本机摄像头识别中（约 45 秒内对准 QR#2）…';
+    if (out) out.textContent = '本机摄像头识别中（最长 60 秒）…';
+    armCamDeadline();
+    // 客户端再加一层超时，确保 abort 能关掉请求与设备占用
+    const clientTimer = setTimeout(() => {
+      try { serverScanCtrl && serverScanCtrl.abort(); } catch (_) {}
+    }, CAM_SCAN_MAX_MS);
     try {
       const r = await api('/api/scan/camera', {
         method: 'POST', body: '{}', signal: serverScanCtrl.signal,
       });
+      clearTimeout(clientTimer);
       serverScanCtrl = null;
       await onFrameScanned(r.frame, true);
     } catch (e) {
-      const aborted = e && (e.name === 'AbortError' || /abort/i.test(String(e.message || e)));
+      clearTimeout(clientTimer);
       serverScanCtrl = null;
+      const msg = String((e && e.message) || e || '');
+      const aborted = e && (e.name === 'AbortError' || /abort/i.test(msg));
+      const serverTimeout = /超时|timeout|deadline/i.test(msg);
+      if (camTimedOut) {
+        // 截止定时器已 stopCam
+        return;
+      }
+      if (serverTimeout) {
+        camTimedOut = true;
+        stopCam('扫码超时（60 秒内未识别），摄像头已关闭。请重新点「扫码」');
+        return;
+      }
       stopCam(aborted ? '已取消扫码' : '');
       if (!aborted) {
-        if (out) out.textContent = '扫码失败: ' + (e.message || e);
-        await alertError(e.message || e);
+        if (out) out.textContent = '扫码失败: ' + msg;
+        await alertError(msg);
       }
     }
   }
 
   function stopCam(hint) {
     camOn = false;
+    clearCamDeadline();
     if (scanTimer) { clearInterval(scanTimer); scanTimer = null; }
     if (stream) {
       stream.getTracks().forEach((t) => t.stop());
@@ -877,9 +936,7 @@
     if (!code || !code.data) return;
     const text = String(code.data).trim();
     if (!text.startsWith('FDT1.')) {
-      if ($('cam-modal-hint')) {
-        $('cam-modal-hint').textContent = '扫到非 FDT 码，请继续对准 QR#2…';
-      }
+      updateCamCountdown('扫到非 FDT 码，请继续对准 QR#2…');
       return;
     }
     onFrameScanned(text, true);
@@ -1190,5 +1247,6 @@
   loadImportFields();
   refresh();
   setInterval(refresh, 1500);
-  // 默认不开摄像头；点「扫码」开预览，失败则回退本机 CAMERA，扫完自动关。
+  // 默认不开摄像头；点「扫码」开预览，失败则回退本机 CAMERA；
+  // 扫成功或满 60 秒未识别均自动关摄像头。
 })();

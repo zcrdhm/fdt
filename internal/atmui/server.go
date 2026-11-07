@@ -275,10 +275,15 @@ func (s *Server) scanCamera(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
+	// Cap open time so a kiosk cannot leave the camera running indefinitely.
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
 	frame, err := sc.Read(ctx)
 	if err != nil {
+		if ctx.Err() != nil {
+			http.Error(w, "扫码超时（60 秒内未识别到二维码），摄像头已关闭", http.StatusGatewayTimeout)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusGatewayTimeout)
 		return
 	}
