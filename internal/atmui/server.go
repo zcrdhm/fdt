@@ -22,20 +22,24 @@ type Server struct {
 
 	maint *maintAuth
 
-	mu       sync.Mutex
-	written  int64
-	total    int64
-	busy     bool
-	lastMsg  string
-	importID string
-	progress atm.WriteProgress
+	importFields ImportFieldsFile
+
+	mu         sync.Mutex
+	written    int64
+	total      int64
+	busy       bool
+	lastMsg    string
+	importID   string
+	progress   atm.WriteProgress
+	progressAt time.Time
 }
 
 // Options configures the ATM UI server beyond the kiosk itself.
 type Options struct {
-	Camera          string
-	MaintPassword   string // ATM_MAINT_PASSWORD bootstrap (default fdt-maint)
+	Camera            string
+	MaintPassword     string // ATM_MAINT_PASSWORD bootstrap (default fdt-maint)
 	MaintPasswordFile string
+	ImportFieldsFile  string // ATM_IMPORT_FIELDS; empty → defaults
 }
 
 // New wires progress reporting onto the kiosk.
@@ -45,15 +49,23 @@ func New(k *atm.Kiosk, camera string) *Server {
 
 // NewWithOptions creates the UI server with maintenance-password settings.
 func NewWithOptions(k *atm.Kiosk, opt Options) *Server {
+	fields, err := LoadImportFields(opt.ImportFieldsFile)
+	if err != nil {
+		fields = DefaultImportFields()
+	}
 	s := &Server{
-		Kiosk:  k,
-		Camera: opt.Camera,
-		maint:  newMaintAuth(opt.MaintPasswordFile, opt.MaintPassword),
+		Kiosk:        k,
+		Camera:       opt.Camera,
+		maint:        newMaintAuth(opt.MaintPasswordFile, opt.MaintPassword),
+		importFields: fields,
 	}
 	k.Progress = func(p atm.WriteProgress) {
 		s.mu.Lock()
 		s.written, s.total = p.Written, p.Total
 		s.progress = p
+		if s.progressAt.IsZero() {
+			s.progressAt = time.Now()
+		}
 		s.mu.Unlock()
 	}
 	return s
@@ -71,6 +83,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/usb/list", s.listUSB)
 	mux.HandleFunc("POST /api/redeem", s.redeem)
 	mux.HandleFunc("POST /api/scan/camera", s.scanCamera)
+	mux.HandleFunc("GET /api/import/fields", s.importFieldsAPI)
 	mux.HandleFunc("POST /api/import/start", s.importStart)
 	mux.HandleFunc("POST /api/import/complete", s.importComplete)
 	mux.HandleFunc("POST /api/maint/unlock", s.maintUnlock)
@@ -168,6 +181,7 @@ func (s *Server) statusPayload() map[string]any {
 	s.mu.Lock()
 	written, total, busy, msg, imp := s.written, s.total, s.busy, s.lastMsg, s.importID
 	prog := s.progress
+	started := s.progressAt
 	s.mu.Unlock()
 	pct := 0
 	if total > 0 {
@@ -183,6 +197,16 @@ func (s *Server) statusPayload() map[string]any {
 		"camera":      s.Camera,
 		"deviceId":    s.Kiosk.ID,
 		"progress":    prog,
+	}
+	if busy && written > 0 && !started.IsZero() {
+		elapsed := time.Since(started).Seconds()
+		if elapsed >= 0.4 {
+			rate := float64(written) / elapsed
+			out["rateBps"] = int64(rate)
+			if total > written && rate > 0 {
+				out["etaSec"] = int64(float64(total-written) / rate)
+			}
+		}
 	}
 	if err := s.Kiosk.LastErr(); err != nil {
 		out["lastError"] = err.Error()
@@ -260,21 +284,38 @@ func (s *Server) listUSB(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) importFieldsAPI(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"version": s.importFields.Version,
+		"fields":  s.importFields.UserFields(),
+	})
+}
+
 func (s *Server) importStart(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Reason string   `json:"reason"`
-		Cls    string   `json:"cls"`
-		ID     string   `json:"applicantId"`
-		Name   string   `json:"applicantName"`
-		Dept   string   `json:"applicantDept"`
-		Paths  []string `json:"paths"`
+		Reason string            `json:"reason"`
+		Cls    string            `json:"cls"`
+		Fields map[string]string `json:"fields"`
+		ID     string            `json:"applicantId"`
+		Name   string            `json:"applicantName"`
+		Dept   string            `json:"applicantDept"`
+		Paths  []string          `json:"paths"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
-	if body.Reason == "" {
-		body.Reason = "import"
+	values := body.Fields
+	if values == nil {
+		values = map[string]string{}
 	}
-	if body.Cls == "" {
-		body.Cls = "internal"
+	if body.Reason != "" {
+		values["reason"] = body.Reason
+	}
+	if body.Cls != "" {
+		values["cls"] = body.Cls
+	}
+	reason, cls, extras, err := s.importFields.NormalizeValues(values)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 	if body.ID == "" {
 		body.ID = s.Kiosk.ID
@@ -291,11 +332,11 @@ func (s *Server) importStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer s.end()
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Minute)
 	defer cancel()
 	start, err := s.Kiosk.StartImport(ctx, model.Applicant{
 		ID: body.ID, Name: body.Name, Dept: body.Dept,
-	}, body.Reason, model.Classification(body.Cls), body.Paths)
+	}, reason, model.Classification(cls), body.Paths, extras)
 	if err != nil {
 		s.setMsg(err.Error())
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -304,8 +345,8 @@ func (s *Server) importStart(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	s.importID = start.ReqID
 	s.mu.Unlock()
-	s.setMsg("已建导入单，请用飞书扫 QR#1")
-	png, _ := qrcode.Encode(start.QR1Frame, qrcode.Medium, 512)
+	s.setMsg("已上传隔离区并签发 QR#1，可用飞书扫码；之后可离开，凭 QR#2 回来放行")
+	png, _ := qrcode.Encode(start.QR1Frame, qrcode.Medium, 1600)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"reqId": start.ReqID, "qr1Frame": start.QR1Frame,
 		"count": start.Count, "merkleRoot": start.MerkleRoot,
@@ -322,9 +363,14 @@ func (s *Server) importComplete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad json", http.StatusBadRequest)
 		return
 	}
-	if body.ReqID == "" || body.Frame == "" {
-		http.Error(w, "需要 reqId 与 frame", http.StatusBadRequest)
+	if body.Frame == "" {
+		http.Error(w, "需要 QR#2 frame", http.StatusBadRequest)
 		return
+	}
+	if body.ReqID == "" {
+		s.mu.Lock()
+		body.ReqID = s.importID
+		s.mu.Unlock()
 	}
 	if !s.begin() {
 		http.Error(w, "忙，请稍候", http.StatusConflict)
@@ -409,6 +455,8 @@ func (s *Server) begin() bool {
 	}
 	s.busy = true
 	s.written, s.total = 0, 0
+	s.progress = atm.WriteProgress{}
+	s.progressAt = time.Now()
 	s.lastMsg = ""
 	return true
 }

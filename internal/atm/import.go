@@ -38,7 +38,8 @@ type ImportStartResult struct {
 
 // StartImport indexes selected paths on the inserted source USB, builds the
 // manifest, and asks the intranet importer to create the request + sign QR#1.
-func (k *Kiosk) StartImport(ctx context.Context, applicant model.Applicant, reason string, cls model.Classification, paths []string) (*ImportStartResult, error) {
+// extras are optional ATM form values carried into QR#1 for Feishu mapping.
+func (k *Kiosk) StartImport(ctx context.Context, applicant model.Applicant, reason string, cls model.Classification, paths []string, extras map[string]string) (*ImportStartResult, error) {
 	if k.Importer == nil {
 		return nil, ErrImportNotConfigured
 	}
@@ -63,6 +64,8 @@ func (k *Kiosk) StartImport(ctx context.Context, applicant model.Applicant, reas
 	if dlp == nil {
 		dlp = manifest.NoopDLP{}
 	}
+	k.setState(StateWriting)
+	k.emitProgress(WriteProgress{Phase: "indexing", FileCount: len(paths)})
 	res, err := manifest.BuildPaths(dev.MountPath(), paths, dlp, k.ImportOpts)
 	if err != nil {
 		err = fmt.Errorf("%w", friendlyUSBReadErr(err))
@@ -70,19 +73,36 @@ func (k *Kiosk) StartImport(ctx context.Context, applicant model.Applicant, reas
 		return nil, err
 	}
 
+	total := res.Dataset.TotalSize
+	k.emitProgress(WriteProgress{Phase: "creating", Total: total, FileCount: res.Dataset.Count})
 	out, err := k.Importer.CreateImport(ctx, importer.ImportRequest{
 		Applicant: applicant, Reason: reason, Cls: cls,
 		Dataset: res.Dataset, Entries: res.Entries, USBSerial: dev.Serial(),
+		Extras: extras,
 	})
 	if err != nil {
 		k.fail(ctx, "", dev.Serial(), "import_create_failed", err)
 		return nil, err
 	}
+	// Upload to quarantine now so the operator can leave; QR#2 later only releases.
+	k.emitProgress(WriteProgress{Phase: "uploading", Written: 0, Total: total, FileCount: out.Count})
+	pr, pw := io.Pipe()
+	go func() {
+		werr := datasvc.WriteTarPaths(pw, dev.MountPath(), paths)
+		_ = pw.CloseWithError(werr)
+	}()
+	body := newProgressReader(pr, total, "uploading", k.emitProgress)
+	if _, err := k.Importer.StageContent(ctx, out.ReqID, body); err != nil {
+		k.fail(ctx, out.ReqID, dev.Serial(), "import_stage_failed", err)
+		return nil, err
+	}
+	k.emitProgress(WriteProgress{Phase: "done", Written: total, Total: total, FileCount: out.Count})
 	k.setImportPaths(out.ReqID, paths)
 	_, _ = k.Store.AppendAudit(ctx, "atm:"+k.ID, k.ID, out.ReqID, "import_indexed", map[string]any{
 		"usbSerial": dev.Serial(), "count": out.Count, "merkle": out.MerkleRoot, "mode": out.Mode,
-		"paths": paths,
+		"paths": paths, "staged": true,
 	})
+	k.setState(StateReady)
 	return &ImportStartResult{
 		ReqID: out.ReqID, QR1Frame: out.QR1Frame, Mode: out.Mode,
 		Count: out.Count, MerkleRoot: out.MerkleRoot, USBSerial: dev.Serial(),
@@ -90,70 +110,59 @@ func (k *Kiosk) StartImport(ctx context.Context, applicant model.Applicant, reas
 	}, nil
 }
 
-// CompleteImport verifies QR#2 locally (fail fast), then streams the selected
-// source paths to the intranet importer which re-hashes (anti-swap), scans and releases.
+// CompleteImport verifies QR#2 and asks the intranet to release already-staged
+// quarantine data. USB is not required (data was uploaded at StartImport).
 func (k *Kiosk) CompleteImport(ctx context.Context, reqID, qr2Frame string) (*importer.ImportResult, error) {
 	if k.Importer == nil {
 		return nil, ErrImportNotConfigured
 	}
-	dev, err := k.USB.Detect()
-	if err != nil {
-		return nil, err
-	}
-	if dev == nil {
-		k.setState(StateIdleNoUSB)
-		k.recordErr(ctx, reqID, "import_no_usb", ErrNoUSB)
-		return nil, ErrNoUSB
-	}
 	if !IsFDTPayload(qr2Frame) {
-		k.fail(ctx, reqID, dev.Serial(), "bad_payload", ErrBadPayload)
+		k.fail(ctx, reqID, "", "bad_payload", ErrBadPayload)
 		return nil, ErrBadPayload
 	}
-	// Local pre-check: reject bad/expired/wrong-direction tokens before streaming.
 	rel, err := token.OpenRelease(qr2Frame, k.GatewayPub)
 	if err != nil {
-		k.fail(ctx, reqID, dev.Serial(), "token_invalid", fmt.Errorf("%w: %v", ErrImportTokenInvalid, err))
+		k.fail(ctx, reqID, "", "token_invalid", fmt.Errorf("%w: %v", ErrImportTokenInvalid, err))
 		return nil, ErrImportTokenInvalid
 	}
 	if err := token.CheckValidity(rel.Iat, rel.Exp, time.Now()); err != nil {
-		k.fail(ctx, reqID, dev.Serial(), "token_expired", err)
+		k.fail(ctx, reqID, "", "token_expired", err)
 		return nil, err
 	}
-	if rel.ReqID != reqID || rel.Dir != model.DirImport {
-		k.fail(ctx, reqID, dev.Serial(), "import_token_mismatch", ErrImportTokenInvalid)
+	if rel.Dir != model.DirImport {
+		k.fail(ctx, reqID, "", "import_token_mismatch", ErrImportTokenInvalid)
+		return nil, ErrImportTokenInvalid
+	}
+	// Prefer reqId embedded in QR#2 so operator need not recall the start session.
+	if reqID == "" {
+		reqID = rel.ReqID
+	}
+	if rel.ReqID != reqID {
+		k.fail(ctx, reqID, "", "import_token_mismatch", ErrImportTokenInvalid)
 		return nil, ErrImportTokenInvalid
 	}
 
-	paths := k.getImportPaths(reqID)
-	if len(paths) == 0 {
-		return nil, ErrImportNoSelection
-	}
-
 	k.setState(StateWriting)
+	k.emitProgress(WriteProgress{Phase: "releasing"})
 	started := time.Now()
-	pr, pw := io.Pipe()
-	go func() {
-		werr := datasvc.WriteTarPaths(pw, dev.MountPath(), paths)
-		_ = pw.CloseWithError(werr)
-	}()
-
-	res, err := k.Importer.UploadAndRelease(ctx, reqID, qr2Frame, pr)
+	res, err := k.Importer.ReleaseImport(ctx, reqID, qr2Frame)
 	if err != nil {
 		result := "failed"
 		if errors.Is(err, importer.ErrBlocked) {
 			result = "blocked"
 		}
-		_ = k.recordImportOp(ctx, reqID, dev.Serial(), started, result)
-		k.fail(ctx, reqID, dev.Serial(), "import_"+result, err)
+		_ = k.recordImportOp(ctx, reqID, "", started, result)
+		k.fail(ctx, reqID, "", "import_"+result, err)
 		return res, err
 	}
 	k.clearImportPaths(reqID)
-	_ = k.recordImportOp(ctx, reqID, dev.Serial(), started, "released")
+	_ = k.recordImportOp(ctx, reqID, "", started, "released")
 	if _, aerr := k.Store.AppendAudit(ctx, "atm:"+k.ID, k.ID, reqID, "import_released", map[string]any{
-		"usbSerial": dev.Serial(), "target": res.ReleasedDir, "files": len(res.Released),
+		"target": res.ReleasedDir, "files": len(res.Released),
 	}); aerr != nil {
 		return res, aerr
 	}
+	k.emitProgress(WriteProgress{Phase: "done"})
 	k.setState(StateDone)
 	k.mu.Lock()
 	k.lastErr = nil

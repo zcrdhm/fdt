@@ -120,7 +120,7 @@ func TestImportReleaseHappyPath(t *testing.T) {
 	})
 	applicant := model.Applicant{ID: "e1", Name: "张三", Dept: "设计部"}
 
-	start, err := r.kiosk.StartImport(r.ctx, applicant, "导入客户资料", model.ClassConfidential, []string{"."})
+	start, err := r.kiosk.StartImport(r.ctx, applicant, "导入客户资料", model.ClassConfidential, []string{"."}, nil)
 	if err != nil {
 		t.Fatalf("StartImport: %v", err)
 	}
@@ -161,7 +161,7 @@ func TestImportBlockedByScanner(t *testing.T) {
 		"payload.exe": "MZ\x90\x00 not really an exe",
 	})
 	applicant := model.Applicant{ID: "e1", Name: "张三"}
-	start, err := r.kiosk.StartImport(r.ctx, applicant, "导入", model.ClassInternal, []string{"."})
+	start, err := r.kiosk.StartImport(r.ctx, applicant, "导入", model.ClassInternal, []string{"."}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,16 +192,17 @@ func TestImportBlockedByScanner(t *testing.T) {
 	}
 }
 
-func TestImportRejectsSwappedUSB(t *testing.T) {
+func TestImportStagedIgnoresLaterUSBSwap(t *testing.T) {
+	// StartImport uploads to quarantine immediately. Tampering the USB afterwards
+	// must not change what gets released (bound by Merkle at stage time).
 	r := setupImport(t, map[string]string{"a.txt": "original\n"})
 	applicant := model.Applicant{ID: "e1", Name: "张三"}
-	start, err := r.kiosk.StartImport(r.ctx, applicant, "导入", model.ClassInternal, []string{"."})
+	start, err := r.kiosk.StartImport(r.ctx, applicant, "导入", model.ClassInternal, []string{"."}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	qr2 := r.approveQR1(t, start.QR1Frame)
 
-	// Attacker swaps the USB contents after indexing but before upload.
 	if err := os.WriteFile(filepath.Join(r.srcDir, "a.txt"), []byte("TAMPERED\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -209,23 +210,26 @@ func TestImportRejectsSwappedUSB(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = r.kiosk.CompleteImport(r.ctx, start.ReqID, qr2)
-	if err == nil {
-		t.Fatal("expected merkle mismatch after swap")
+	res, err := r.kiosk.CompleteImport(r.ctx, start.ReqID, qr2)
+	if err != nil {
+		t.Fatalf("CompleteImport after USB swap: %v", err)
 	}
-	req, _ := r.store.GetRequest(r.ctx, start.ReqID)
-	if req.Status == store.StatusReleased {
-		t.Fatal("swapped data must not be released")
+	if res.Status != store.StatusReleased {
+		t.Fatalf("status = %s", res.Status)
 	}
-	if _, err := os.Stat(filepath.Join(r.work, "target", start.ReqID)); !os.IsNotExist(err) {
-		t.Fatal("swapped import must not reach target")
+	got, err := os.ReadFile(filepath.Join(r.work, "target", start.ReqID, "a.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "original\n" {
+		t.Fatalf("released content = %q, want original (staged before swap)", got)
 	}
 }
 
 func TestImportNoUSBRejected(t *testing.T) {
 	r := setupImport(t, map[string]string{"a.txt": "x"})
 	r.usbMgr.Remove()
-	_, err := r.kiosk.StartImport(r.ctx, model.Applicant{ID: "e1"}, "导入", model.ClassInternal, []string{"."})
+	_, err := r.kiosk.StartImport(r.ctx, model.Applicant{ID: "e1"}, "导入", model.ClassInternal, []string{"."}, nil)
 	if err != atm.ErrNoUSB {
 		t.Fatalf("want ErrNoUSB, got %v", err)
 	}

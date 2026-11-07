@@ -104,7 +104,10 @@ type ReleaseToken struct {
 	MerkleRoot   string    `json:"merkleRoot" cbor:"merkleRoot"`
 	FsApprovalID string    `json:"fsApprovalId" cbor:"fsApprovalId"`
 	Approver     Applicant `json:"approver" cbor:"approver"`
-	Nonce        string    `json:"nonce" cbor:"nonce"`
-	Iat          int64     `json:"iat" cbor:"iat"`
-	Exp          int64     `json:"exp" cbor:"exp"`
+	// Applicant is the Feishu user who submitted QR#1 (谁扫码谁申请). Used by
+	// intranet import release to re-attribute the request away from ATM device id.
+	Applicant Applicant `json:"applicant,omitempty" cbor:"applicant,omitempty"`
+	Nonce     string    `json:"nonce" cbor:"nonce"`
+	Iat       int64     `json:"iat" cbor:"iat"`
+	Exp       int64     `json:"exp" cbor:"exp"`
 }

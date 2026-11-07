@@ -179,11 +179,13 @@
         </div>
         <button type="button" class="ghost" id="btn-hist-close">关闭</button>
       </div>
-      <div class="hint-line" id="hist-detail-meta"></div>
       <img class="qr" id="hist-qr" alt="QR#1" />
-      <label>事由 / 状态</label>
-      <pre class="mono" id="hist-detail-body"></pre>
-      <p class="ok hidden" id="hist-download-hint">导入已释放，可下载 ZIP 包。</p>
+      <div class="modal-body-scroll">
+        <div class="hint-line" id="hist-detail-meta"></div>
+        <label>事由 / 状态</label>
+        <pre class="mono" id="hist-detail-body"></pre>
+        <p class="ok hidden" id="hist-download-hint">导入已释放，可下载 ZIP 包。</p>
+      </div>
       <div class="modal-actions">
         <a class="btn ghost hidden" id="btn-hist-download" href="#">下载导入包</a>
         <button type="button" id="btn-hist-ok">关闭</button>

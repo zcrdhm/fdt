@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "fields": [
+    {
+      "key": "reason",
+      "label": "事由",
+      "type": "text",
+      "required": true,
+      "default": "导入资料",
+      "order": 10,
+      "enabled": true,
+      "builtin": true
+    },
+    {
+      "key": "cls",
+      "label": "密级",
+      "type": "select",
+      "required": true,
+      "options": ["internal", "confidential", "secret"],
+      "default": "confidential",
+      "order": 20,
+      "enabled": true,
+      "builtin": true
+    }
+  ]
+}

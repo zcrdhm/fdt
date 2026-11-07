@@ -172,6 +172,72 @@ func (s *Service) FirstLiveJSAPI() feishu.JSAPISigner {
 	return nil
 }
 
+// IdentityInfo is the logged-in Feishu user resolved from an H5 auth code.
+type IdentityInfo struct {
+	Name         string `json:"name"`
+	ApplicantID  string `json:"applicantId"` // id used for审批申请人（按租户 userIdType）
+	UserIDType   string `json:"userIdType"`
+	UserID       string `json:"userId,omitempty"`
+	OpenID       string `json:"openId,omitempty"`
+	UnionID      string `json:"unionId,omitempty"`
+	Tenant       string `json:"tenant,omitempty"`
+}
+
+// ResolveIdentity exchanges authCode via the first live Feishu tenant.
+func (s *Service) ResolveIdentity(ctx context.Context, authCode string) (*IdentityInfo, error) {
+	if strings.TrimSpace(authCode) == "" {
+		return nil, fmt.Errorf("gateway: authCode required")
+	}
+	s.mu.Lock()
+	ids := make([]string, 0, len(s.tenants))
+	for id := range s.tenants {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	var idp feishu.IdentityFromCode
+	tenantID := ""
+	userIDType := ""
+	for _, id := range ids {
+		cfg := s.tenants[id]
+		if _, isMock := cfg.Feishu.(*feishu.MockClient); isMock {
+			continue
+		}
+		live, ok := cfg.Feishu.(feishu.IdentityFromCode)
+		if !ok {
+			continue
+		}
+		idp = live
+		tenantID = id
+		if lc, ok := cfg.Feishu.(*feishu.LiveClient); ok {
+			userIDType = lc.UserIDType()
+		}
+		break
+	}
+	s.mu.Unlock()
+	if idp == nil {
+		return nil, fmt.Errorf("gateway: 未配置 live 飞书租户，无法解析身份")
+	}
+	u, err := idp.UserFromAuthCode(ctx, authCode)
+	if err != nil {
+		return nil, err
+	}
+	if userIDType == "" {
+		userIDType = "user_id"
+	}
+	// Portal 绑定优先飞书 user_id；通讯录权限未生效前可暂用 open_id。
+	bindID := u.UserID
+	if bindID == "" {
+		bindID = idp.ApplicantIDFor(u)
+	}
+	if bindID == "" {
+		bindID = u.OpenID
+	}
+	return &IdentityInfo{
+		Name: u.Name, ApplicantID: bindID, UserIDType: userIDType,
+		UserID: u.UserID, OpenID: u.OpenID, UnionID: u.UnionID, Tenant: tenantID,
+	}, nil
+}
+
 func (s *Service) Tenants() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -190,6 +256,7 @@ type Submission struct {
 	InstanceID   string                `json:"instanceId"`
 	Status       feishu.ApprovalStatus `json:"status"`
 	ManifestText string                `json:"manifestText"`
+	Direction    string                `json:"direction,omitempty"` // export | import
 }
 
 // SubmitQR1 routes by the frame's tenant prefix, verifies with that tenant's
@@ -227,6 +294,13 @@ func (s *Service) SubmitQR1(ctx context.Context, frame, authCode string) (*Submi
 			return nil, fmt.Errorf("gateway: 飞书身份授权失败: %w", err)
 		}
 		applicantID = idp.ApplicantIDFor(u)
+		if applicantID == "" {
+			// 通讯录 user_id 权限未生效时，回退 open_id，避免扫码提交直接失败。
+			applicantID = u.OpenID
+		}
+		if applicantID == "" {
+			return nil, fmt.Errorf("gateway: 飞书身份缺少 user_id/open_id")
+		}
 		if u.Name != "" {
 			applicantName = u.Name
 		}
@@ -265,17 +339,18 @@ func (s *Service) SubmitQR1(ctx context.Context, frame, authCode string) (*Submi
 	s.mu.Unlock()
 
 	return &Submission{Tenant: tenantID, ReqID: tok.ReqID, InstanceID: inst.ID,
-		Status: inst.Status, ManifestText: manifestText}, nil
+		Status: inst.Status, ManifestText: manifestText, Direction: string(tok.Dir)}, nil
 }
 
 // QR2Result is returned when polling for the release token.
 type QR2Result struct {
-	Tenant   string                `json:"tenant"`
-	ReqID    string                `json:"reqId"`
-	Status   feishu.ApprovalStatus `json:"status"`
-	QR2Frame string                `json:"qr2Frame,omitempty"`
-	Approver string                `json:"approver,omitempty"`
-	Exp      int64                 `json:"exp,omitempty"`
+	Tenant    string                `json:"tenant"`
+	ReqID     string                `json:"reqId"`
+	Status    feishu.ApprovalStatus `json:"status"`
+	QR2Frame  string                `json:"qr2Frame,omitempty"`
+	Approver  string                `json:"approver,omitempty"`
+	Exp       int64                 `json:"exp,omitempty"`
+	Direction string                `json:"direction,omitempty"` // export | import
 }
 
 // HistoryItem is a compact session summary for the H5 history list.
@@ -289,6 +364,32 @@ type HistoryItem struct {
 	Applicant string                `json:"applicant,omitempty"`
 	Reason    string                `json:"reason,omitempty"`
 	Exp       int64                 `json:"exp,omitempty"`
+	Direction string                `json:"direction,omitempty"` // export | import
+	FileCount int                   `json:"fileCount,omitempty"`
+	TotalSize int64                 `json:"totalSize,omitempty"`
+	FileNames []string              `json:"fileNames,omitempty"` // physical paths from QR#1 (capped)
+}
+
+// historyFileNames picks physical file paths from the QR#1 dataset for H5 display.
+func historyFileNames(ds model.Dataset, max int) []string {
+	if max <= 0 {
+		max = 3
+	}
+	out := make([]string, 0, max)
+	for _, e := range ds.Entries {
+		if strings.TrimSpace(e.InArchive) != "" {
+			continue
+		}
+		p := strings.TrimSpace(e.Path)
+		if p == "" || p == "." {
+			continue
+		}
+		out = append(out, p)
+		if len(out) >= max {
+			break
+		}
+	}
+	return out
 }
 
 // ListHistory returns recent sessions (newest first). tenant filters when non-empty.
@@ -307,10 +408,14 @@ func (s *Service) ListHistory(tenant string, limit int) []HistoryItem {
 		if tenant != "" && sess.Tenant != tenant {
 			continue
 		}
+		tok := sess.ReqToken
 		it := HistoryItem{
-			Tenant: sess.Tenant, ReqID: sess.ReqToken.ReqID, Status: sess.Status,
+			Tenant: sess.Tenant, ReqID: tok.ReqID, Status: sess.Status,
 			HasQR2: sess.QR2Frame != "", Approver: sess.Approver,
-			Applicant: sess.ReqToken.Applicant.Name, Reason: sess.ReqToken.Reason,
+			Applicant: tok.Applicant.Name, Reason: tok.Reason,
+			Direction: string(tok.Dir),
+			FileCount: tok.Dataset.Count, TotalSize: tok.Dataset.TotalSize,
+			FileNames: historyFileNames(tok.Dataset, 3),
 		}
 		if !sess.QR2Exp.IsZero() {
 			it.Exp = sess.QR2Exp.Unix()
@@ -361,6 +466,9 @@ func (s *Service) PollQR2(ctx context.Context, reqID string) (*QR2Result, error)
 	}
 	res := &QR2Result{Tenant: sess.Tenant, ReqID: reqID, Status: sess.Status,
 		QR2Frame: sess.QR2Frame, Approver: sess.Approver}
+	if sess.ReqToken != nil {
+		res.Direction = string(sess.ReqToken.Dir)
+	}
 	if !sess.QR2Exp.IsZero() {
 		res.Exp = sess.QR2Exp.Unix()
 	}
@@ -452,6 +560,7 @@ func (s *Service) mintQR2Locked(sess *session) error {
 		MerkleRoot:   sess.ReqToken.Dataset.MerkleRoot,
 		FsApprovalID: sess.InstanceID,
 		Approver:     model.Applicant{Name: sess.Approver},
+		Applicant:    sess.ReqToken.Applicant, // Feishu identity after authCode
 		Nonce:        fmt.Sprintf("%x", now.UnixNano()),
 		Iat:          now.Unix(),
 		Exp:          exp.Unix(),

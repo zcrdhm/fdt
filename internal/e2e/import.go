@@ -122,7 +122,7 @@ func RunImport(ctx context.Context, cfg ImportConfig) (*ImportReport, error) {
 	kiosk.ImportDLP = manifest.RuleBasedDLP{}
 
 	// Negative: no USB -> StartImport rejected.
-	if _, err := kiosk.StartImport(ctx, model.Applicant{ID: "e1234", Name: "张三", Dept: "设计部"}, "导入", model.ClassConfidential, []string{"."}); err != atm.ErrNoUSB {
+	if _, err := kiosk.StartImport(ctx, model.Applicant{ID: "e1234", Name: "张三", Dept: "设计部"}, "导入", model.ClassConfidential, []string{"."}, nil); err != atm.ErrNoUSB {
 		return nil, fmt.Errorf("expected ErrNoUSB without a device, got %v", err)
 	}
 	rep.NoUSBErr = atm.ErrNoUSB
@@ -132,7 +132,7 @@ func RunImport(ctx context.Context, cfg ImportConfig) (*ImportReport, error) {
 	if err := usbMgr.Insert("USB-SRC-0001", srcDir, 1<<30, true, "exfat"); err != nil {
 		return nil, err
 	}
-	start, err := kiosk.StartImport(ctx, model.Applicant{ID: "e1234", Name: "张三", Dept: "设计部"}, "导入客户资料", model.ClassConfidential, []string{"."})
+	start, err := kiosk.StartImport(ctx, model.Applicant{ID: "e1234", Name: "张三", Dept: "设计部"}, "导入客户资料", model.ClassConfidential, []string{"."}, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -172,7 +172,7 @@ func RunImport(ctx context.Context, cfg ImportConfig) (*ImportReport, error) {
 	if err := usbMgr.Insert("USB-SRC-0002", blockedSrc, 1<<30, true, "exfat"); err != nil {
 		return nil, err
 	}
-	bstart, err := kiosk.StartImport(ctx, model.Applicant{ID: "e1234", Name: "张三"}, "导入(含可执行)", model.ClassInternal, []string{"."})
+	bstart, err := kiosk.StartImport(ctx, model.Applicant{ID: "e1234", Name: "张三"}, "导入(含可执行)", model.ClassInternal, []string{"."}, nil)
 	if err != nil {
 		return nil, err
 	}

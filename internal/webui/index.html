@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>FDT 内网 Portal</title>
+  <title>FDT 数据摆渡-内网 Portal</title>
   <link rel="stylesheet" href="/app.css" />
 </head>
 <body>
@@ -29,7 +29,7 @@
     <section id="view-app" class="hidden">
       <div class="top">
         <div class="brand">
-          <h1>FDT 内网 Portal</h1>
+          <h1>FDT 数据摆渡-内网 Portal</h1>
           <p>离线侧上传与签发 QR#1。申请人身份来自目录；飞书用户 ID 可单独绑定。</p>
         </div>
         <div class="nav">
@@ -110,10 +110,10 @@
       <section id="panel-bind" class="hidden">
         <div class="card">
           <h2>绑定飞书用户 ID</h2>
-          <p class="sub">写入 QR#1 的申请人 ID。填管理后台「用户 ID」（user_id）或 open_id，须与网关 <code>userIdType</code> 一致。</p>
+          <p class="sub">导出前必须绑定。请用手机打开飞书「数据摆渡审批」→ <b>Portal 绑定用飞书 ID</b>，复制那一串粘贴到下方（飞书管理后台「用户 ID」/ <code>user_id</code>，例如 <code>g976f94f</code>，不是 <code>ou_…</code> 开头的 open_id）。</p>
           <label>当前目录工号 / ID</label>
           <input id="bind-dir-id" readonly />
-          <label>飞书用户 ID</label>
+          <label>飞书用户 ID（从飞书网页应用复制）</label>
           <input id="bind-feishu" placeholder="例如 g976f94f" />
           <div class="actions">
             <button type="button" id="btn-bind">保存绑定</button>
@@ -138,8 +138,7 @@
       </div>
       <img class="qr" id="qr" alt="QR#1" />
       <div class="hint-line" id="summary"></div>
-      <label>DLP / 清单摘要</label>
-      <pre class="mono" id="manifest"></pre>
+      <pre class="mono hidden" id="manifest" aria-hidden="true"></pre>
       <div class="modal-actions">
         <button type="button" id="btn-qr-ok">知道了</button>
       </div>
@@ -155,11 +154,13 @@
         </div>
         <button type="button" class="ghost" id="btn-hist-close">关闭</button>
       </div>
-      <div class="hint-line" id="hist-detail-meta"></div>
       <img class="qr" id="hist-qr" alt="QR#1" />
-      <label>事由 / 状态</label>
-      <pre class="mono" id="hist-detail-body"></pre>
-      <p class="ok hidden" id="hist-download-hint">导入已释放，可下载 ZIP 包到本机。</p>
+      <div class="modal-body-scroll">
+        <div class="hint-line" id="hist-detail-meta"></div>
+        <label>事由 / 状态</label>
+        <pre class="mono" id="hist-detail-body"></pre>
+        <p class="ok hidden" id="hist-download-hint">导入已释放，可下载 ZIP 包到本机。</p>
+      </div>
       <div class="modal-actions">
         <a class="btn ghost hidden" id="btn-hist-download" href="#">下载导入包</a>
         <button type="button" id="btn-hist-ok">关闭</button>

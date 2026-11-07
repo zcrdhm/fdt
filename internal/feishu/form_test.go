@@ -22,14 +22,14 @@ func TestBuildApprovalFormIsWidgetArray(t *testing.T) {
 	if err := json.Unmarshal([]byte(raw), &items); err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 10 || items[0]["id"] != "req_id" || items[0]["value"] != "r1" {
+	if len(items) != 9 || items[0]["id"] != "req_id" || items[0]["value"] != "r1" {
 		t.Fatalf("items = %#v", items)
 	}
-	if items[1]["id"] != "direction" || items[1]["value"] != "导入" {
-		t.Fatalf("direction widget = %#v", items[1])
+	if items[1]["id"] != "applicant" || items[1]["value"] != "张三" {
+		t.Fatalf("applicant widget = %#v", items[1])
 	}
-	if items[9]["type"] != "textarea" || items[9]["value"] != "清单" {
-		t.Fatalf("manifest widget = %#v", items[9])
+	if items[8]["type"] != "textarea" || items[8]["value"] != "清单" {
+		t.Fatalf("manifest widget = %#v", items[8])
 	}
 }
 

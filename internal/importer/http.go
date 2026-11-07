@@ -27,7 +27,9 @@ func (h *Handler) Router() http.Handler {
 		_, _ = w.Write([]byte("ok"))
 	})
 	mux.Handle("POST /imports", h.auth(h.createImport))
-	mux.Handle("POST /imports/{id}/content", h.auth(h.uploadContent))
+	mux.Handle("POST /imports/{id}/stage", h.auth(h.stageContent))
+	mux.Handle("POST /imports/{id}/release", h.auth(h.releaseStaged))
+	mux.Handle("POST /imports/{id}/content", h.auth(h.uploadContent)) // legacy: stage+release
 	return mux
 }
 
@@ -54,6 +56,46 @@ func (h *Handler) createImport(w http.ResponseWriter, r *http.Request, _ *store.
 		return
 	}
 	writeJSON(w, http.StatusOK, res)
+}
+
+func (h *Handler) stageContent(w http.ResponseWriter, r *http.Request, dev *store.Device) {
+	id := r.PathValue("id")
+	limit := h.MaxUploadBytes
+	if limit <= 0 {
+		limit = 8 << 30
+	}
+	body := io.LimitReader(r.Body, limit)
+	res, err := h.Svc.StageContent(r.Context(), id, body, dev.ID)
+	if err != nil {
+		writeErrJSON(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+func (h *Handler) releaseStaged(w http.ResponseWriter, r *http.Request, dev *store.Device) {
+	id := r.PathValue("id")
+	frame := r.Header.Get("X-Release-Token")
+	if frame == "" {
+		var body struct {
+			Frame string `json:"frame"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		frame = body.Frame
+	}
+	if frame == "" {
+		writeErrJSON(w, http.StatusBadRequest, errors.New("importer: missing QR#2 frame"))
+		return
+	}
+	res, err := h.Svc.ReleaseStaged(r.Context(), id, frame, dev.ID)
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, res)
+	case errors.Is(err, ErrBlocked):
+		writeJSON(w, http.StatusUnprocessableEntity, res)
+	default:
+		writeErrJSON(w, http.StatusBadRequest, err)
+	}
 }
 
 func (h *Handler) uploadContent(w http.ResponseWriter, r *http.Request, dev *store.Device) {
@@ -92,8 +134,11 @@ func writeErrJSON(w http.ResponseWriter, code int, err error) {
 // Client is the ATM-facing importer client.
 type Client interface {
 	CreateImport(ctx context.Context, in ImportRequest) (*ImportCreateResult, error)
-	// UploadAndRelease streams the USB tar and triggers verify+scan+release.
-	// A blocked import returns the result (Status=BLOCKED, Findings) plus ErrBlocked.
+	// StageContent uploads USB bytes to quarantine (no QR#2).
+	StageContent(ctx context.Context, reqID string, tarBody io.Reader) (*ImportResult, error)
+	// ReleaseImport authorizes release of already-staged content with QR#2.
+	ReleaseImport(ctx context.Context, reqID, qr2Frame string) (*ImportResult, error)
+	// UploadAndRelease is legacy one-shot (stage+release). Prefer Stage then Release.
 	UploadAndRelease(ctx context.Context, reqID, qr2Frame string, tarBody io.Reader) (*ImportResult, error)
 }
 
@@ -136,13 +181,38 @@ func (c *HTTPClient) CreateImport(ctx context.Context, in ImportRequest) (*Impor
 	return &out, nil
 }
 
-func (c *HTTPClient) UploadAndRelease(ctx context.Context, reqID, qr2Frame string, tarBody io.Reader) (*ImportResult, error) {
+func (c *HTTPClient) StageContent(ctx context.Context, reqID string, tarBody io.Reader) (*ImportResult, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		c.BaseURL+"/imports/"+reqID+"/content", tarBody)
+		c.BaseURL+"/imports/"+reqID+"/stage", tarBody)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/x-tar")
+	req.Header.Set("X-Device-ID", c.DeviceID)
+	req.Header.Set("Authorization", "Bearer "+c.Secret)
+	resp, err := c.client().Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("importer: stage %d: %s", resp.StatusCode, readBody(resp.Body))
+	}
+	var out ImportResult
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *HTTPClient) ReleaseImport(ctx context.Context, reqID, qr2Frame string) (*ImportResult, error) {
+	body, _ := json.Marshal(map[string]string{"frame": qr2Frame})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.BaseURL+"/imports/"+reqID+"/release", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Device-ID", c.DeviceID)
 	req.Header.Set("Authorization", "Bearer "+c.Secret)
 	req.Header.Set("X-Release-Token", qr2Frame)
@@ -165,6 +235,13 @@ func (c *HTTPClient) UploadAndRelease(ctx context.Context, reqID, qr2Frame strin
 	default:
 		return nil, fmt.Errorf("importer: release %d: %s", resp.StatusCode, readBody(resp.Body))
 	}
+}
+
+func (c *HTTPClient) UploadAndRelease(ctx context.Context, reqID, qr2Frame string, tarBody io.Reader) (*ImportResult, error) {
+	if _, err := c.StageContent(ctx, reqID, tarBody); err != nil {
+		return nil, err
+	}
+	return c.ReleaseImport(ctx, reqID, qr2Frame)
 }
 
 func readBody(r io.Reader) string {

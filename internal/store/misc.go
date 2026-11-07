@@ -79,6 +79,20 @@ func (s *Store) SetStatus(ctx context.Context, reqID string, st Status) error {
 }
 
 // SetDataDir updates the on-disk path for a request (e.g. quarantine → released).
+// SetApplicant updates who owns the request (e.g. import: ATM placeholder → Feishu user).
+func (s *Store) SetApplicant(ctx context.Context, reqID, id, name, dept string) error {
+	res, err := s.exec(ctx, `UPDATE requests SET applicant_id=?, applicant_name=?, dept=? WHERE id=?`,
+		id, name, dept, reqID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (s *Store) SetDataDir(ctx context.Context, reqID, dir string) error {
 	res, err := s.exec(ctx, `UPDATE requests SET data_dir=? WHERE id=?`, dir, reqID)
 	if err != nil {

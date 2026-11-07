@@ -11,6 +11,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -438,4 +439,74 @@ func (s *Store) GetRequestFiles(ctx context.Context, reqID string) ([]model.File
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// PhysicalFileNames returns display paths for physical files (skips archive members).
+// maxPer caps names per request (0 = default 12). Paths keep relative form; empty → basename.
+func (s *Store) PhysicalFileNames(ctx context.Context, reqIDs []string, maxPer int) (map[string][]string, error) {
+	out := map[string][]string{}
+	if len(reqIDs) == 0 {
+		return out, nil
+	}
+	if maxPer <= 0 {
+		maxPer = 12
+	}
+	seenID := map[string]bool{}
+	ids := make([]string, 0, len(reqIDs))
+	for _, id := range reqIDs {
+		id = strings.TrimSpace(id)
+		if id == "" || seenID[id] {
+			continue
+		}
+		seenID[id] = true
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	// Chunk IN clauses for SQLite parameter limits.
+	const chunk = 80
+	for i := 0; i < len(ids); i += chunk {
+		end := i + chunk
+		if end > len(ids) {
+			end = len(ids)
+		}
+		part := ids[i:end]
+		pholders := strings.TrimRight(strings.Repeat("?,", len(part)), ",")
+		q := `SELECT request_id, path, in_archive FROM request_files WHERE request_id IN (` + pholders + `) ORDER BY request_id, leaf, path`
+		args := make([]any, len(part))
+		for j, id := range part {
+			args[j] = id
+		}
+		rows, err := s.query(ctx, q, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var reqID, path string
+			var inArch sql.NullString
+			if err := rows.Scan(&reqID, &path, &inArch); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			if inArch.Valid && strings.TrimSpace(inArch.String) != "" {
+				continue // archive member — not a top-level USB file
+			}
+			path = filepath.ToSlash(strings.TrimSpace(path))
+			if path == "" || path == "." {
+				continue
+			}
+			list := out[reqID]
+			if len(list) >= maxPer {
+				continue
+			}
+			out[reqID] = append(list, path)
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
 }

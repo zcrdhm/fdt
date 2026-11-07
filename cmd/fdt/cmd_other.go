@@ -127,6 +127,11 @@ func cmdATM(args []string) error {
 	listen := fs.String("listen", envOr(env, "ATM_UI_LISTEN", "0.0.0.0:9080"), "ATM UI 监听地址（配合 -ui）")
 	maintPass := fs.String("maint-password", envOr(env, "ATM_MAINT_PASSWORD", "fdt-maint"), "维护模式密码（退出全屏用）")
 	maintPassFile := fs.String("maint-password-file", envOr(env, "ATM_MAINT_PASSWORD_FILE", filepath.Join(dataDir, "atm_maint_password")), "维护密码持久化文件")
+	defaultImportFields := "/opt/fdt-atm/etc/import-fields.json"
+	if envPath != "" {
+		defaultImportFields = filepath.Join(filepath.Dir(envPath), "import-fields.json")
+	}
+	importFields := fs.String("import-fields", envOr(env, "ATM_IMPORT_FIELDS", defaultImportFields), "ATM 导入表单 JSON（本机独立配置）")
 	mode := fs.String("mode", "export", "")
 	phase := fs.String("import-phase", "start", "")
 	reqID := fs.String("req-id", "", "")
@@ -164,14 +169,17 @@ func cmdATM(args []string) error {
 	k.ImportDLP = manifest.ContentEngine{}
 
 	if *ui {
+		_ = atmui.WriteDefaultImportFields(*importFields)
 		srv := atmui.NewWithOptions(k, atmui.Options{
 			Camera:            *cameraDev,
 			MaintPassword:     *maintPass,
 			MaintPasswordFile: *maintPassFile,
+			ImportFieldsFile:  *importFields,
 		})
 		fmt.Printf("ATM Kiosk UI: http://127.0.0.1%s/\n", portOnly(*listen))
 		fmt.Printf("  监听 %s · 设备 %s · 摄像头 %s\n", *listen, *deviceID, *cameraDev)
 		fmt.Printf("  维护密码文件 %s（默认密码见 ATM_MAINT_PASSWORD）\n", *maintPassFile)
+		fmt.Printf("  导入表单 %s\n", *importFields)
 		return http.ListenAndServe(*listen, srv.Handler())
 	}
 
@@ -189,7 +197,7 @@ func cmdATM(args []string) error {
 		fmt.Printf("OK %s -> %s (%d bytes)\n", res.ReqID, res.OutDir, res.WrittenBytes)
 	case "import":
 		if *phase == "start" {
-			start, err := k.StartImport(ctx, model.Applicant{ID: *deviceID, Name: *deviceID}, *reason, model.Classification(*cls), []string{"."})
+			start, err := k.StartImport(ctx, model.Applicant{ID: *deviceID, Name: *deviceID}, *reason, model.Classification(*cls), []string{"."}, nil)
 			if err != nil {
 				return err
 			}

@@ -936,8 +936,17 @@ func (h *Handler) listRequests(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	ids := make([]string, 0, len(list))
+	for _, req := range list {
+		ids = append(ids, req.ID)
+	}
+	fileNames, _ := h.Svc.Store.PhysicalFileNames(r.Context(), ids, 12)
 	items := make([]map[string]any, 0, len(list))
 	for _, req := range list {
+		names := fileNames[req.ID]
+		if names == nil {
+			names = []string{}
+		}
 		items = append(items, map[string]any{
 			"id":            req.ID,
 			"dir":           req.Dir,
@@ -957,6 +966,7 @@ func (h *Handler) listRequests(w http.ResponseWriter, r *http.Request) {
 			"usbSerial":     req.USBSerial,
 			"fsApproval":    req.FsApproval,
 			"extras":        req.Extras,
+			"fileNames":     names,
 			"downloadable":  h.isDownloadable(req),
 		})
 	}
@@ -976,6 +986,12 @@ func (h *Handler) getRequest(w http.ResponseWriter, r *http.Request) {
 	if !h.canAccessRequest(r, id) {
 		http.Error(w, "无权查看该申请单", http.StatusForbidden)
 		return
+	}
+	names := []string{}
+	if m, err := h.Svc.Store.PhysicalFileNames(r.Context(), []string{id}, 50); err == nil {
+		if got := m[id]; len(got) > 0 {
+			names = got
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ID": req.ID, "id": req.ID,
@@ -997,6 +1013,7 @@ func (h *Handler) getRequest(w http.ResponseWriter, r *http.Request) {
 		"USBSerial": req.USBSerial, "usbSerial": req.USBSerial,
 		"FsApproval": req.FsApproval, "fsApproval": req.FsApproval,
 		"Extras": req.Extras, "extras": req.Extras,
+		"fileNames":    names,
 		"downloadable": h.isDownloadable(req),
 		"downloadUrl":  "/requests/" + req.ID + "/download",
 	})
@@ -1150,7 +1167,7 @@ func (h *Handler) getQR1PNG(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
-	png, err := qrcode.Encode(frame, qrcode.Low, 512)
+	png, err := qrcode.Encode(frame, qrcode.Medium, 1024)
 	if err != nil {
 		http.Error(w, "qr encode: "+err.Error(), http.StatusInternalServerError)
 		return

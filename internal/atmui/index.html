@@ -28,7 +28,8 @@
       </div>
       <div class="tabs">
         <button type="button" class="tab on" data-tab="export">导出兑付</button>
-        <button type="button" class="tab" data-tab="import">导入</button>
+        <button type="button" class="tab" data-tab="import">导入申请</button>
+        <button type="button" class="tab" data-tab="import-redeem">导入兑付</button>
       </div>
     </header>
 
@@ -67,16 +68,9 @@
     </section>
 
     <section id="panel-import" class="panel hidden">
-      <h2>导入 · U 盘 → 内网</h2>
-      <p class="hint">插源盘 → 勾选文件 → 生成 QR#1 → 用飞书扫码（当前飞书账号即申请人）→ 审批通过后扫 QR#2 完成导入。ATM 无需登录或填写飞书 ID。</p>
-      <label>事由</label>
-      <input id="imp-reason" value="导入资料" />
-      <label>密级</label>
-      <select id="imp-cls">
-        <option value="internal">internal</option>
-        <option value="confidential" selected>confidential</option>
-        <option value="secret">secret</option>
-      </select>
+      <h2>导入申请 · U 盘 → 隔离区</h2>
+      <p class="hint">插盘选文件 →「生成 QR#1」会<strong>立刻上传到隔离区</strong>，可用飞书扫码后<strong>拔盘离开</strong>。审批通过后到「导入兑付」扫 QR#2 放行。<br>表单字段由本机 <code>import-fields.json</code> 配置。</p>
+      <div id="import-fields"></div>
       <label>从 U 盘选择</label>
       <div class="usb-picker" id="usb-picker">
         <div class="usb-picker-bar">
@@ -91,19 +85,38 @@
         <ul class="file-names" id="imp-selected"></ul>
       </div>
       <div class="actions">
-        <button type="button" class="primary" id="btn-import-start" disabled>生成 QR#1</button>
+        <button type="button" class="primary" id="btn-import-start" disabled>生成 QR#1 并上传</button>
         <button type="button" class="ghost hidden" id="btn-import-show-qr">查看 QR#1</button>
+      </div>
+      <div class="redeem-box hidden" id="import-xfer-box">
+        <div class="redeem-path" id="import-xfer-path"></div>
+        <div class="redeem-file" id="import-xfer-file"></div>
+        <div class="prog" id="import-xfer-prog-wrap"><div class="bar" id="import-xfer-prog-bar"></div></div>
+        <div class="redeem-pct" id="import-xfer-pct"></div>
       </div>
       <div id="import-complete" class="hidden">
         <div class="hint" id="import-meta"></div>
-        <label>扫 QR#2 完成导入</label>
-        <textarea id="imp-frame" rows="3" placeholder="FDT1...."></textarea>
-        <div class="actions">
-          <button type="button" class="primary" id="btn-import-done">完成导入</button>
-          <button type="button" class="ghost" id="btn-import-cam">扫码</button>
-        </div>
       </div>
       <pre class="out" id="import-out"></pre>
+    </section>
+
+    <section id="panel-import-redeem" class="panel hidden">
+      <h2>导入兑付 · 扫 QR#2 放行</h2>
+      <p class="hint">审批通过后扫飞书放行码（QR#2），放行隔离区数据。无需 U 盘，也无需同一台机器当时插盘。</p>
+      <div class="actions">
+        <button type="button" class="primary" id="btn-import-cam">扫码</button>
+      </div>
+      <label>或粘贴令牌</label>
+      <textarea id="imp-frame" rows="3" placeholder="FDT1...."></textarea>
+      <div class="actions">
+        <button type="button" class="primary" id="btn-import-done">手动兑付放行</button>
+      </div>
+      <div class="redeem-box hidden" id="import-redeem-box">
+        <div class="redeem-file" id="import-redeem-file"></div>
+        <div class="prog hidden" id="import-redeem-prog-wrap"><div class="bar" id="import-redeem-prog-bar"></div></div>
+        <div class="redeem-pct" id="import-redeem-pct"></div>
+      </div>
+      <pre class="out" id="import-redeem-out"></pre>
     </section>
   </div>
 
@@ -138,13 +151,15 @@
   </div>
 
   <div class="modal-mask hidden" id="import-qr-modal" role="dialog" aria-modal="true">
-    <div class="modal-card cam-modal-card">
+    <div class="modal-card import-qr-card">
       <div class="cam-modal-head">
         <div class="modal-title">导入申请 QR#1</div>
         <button type="button" class="ghost" id="btn-import-qr-close">关闭</button>
       </div>
       <p class="hint" id="import-qr-hint">请用飞书网页应用扫码发起审批。</p>
-      <img id="import-qr" alt="QR#1" />
+      <div class="import-qr-stage">
+        <img id="import-qr" alt="QR#1" />
+      </div>
       <div class="hint" id="import-qr-meta"></div>
       <div class="modal-actions cam-modal-actions">
         <button type="button" class="primary" id="btn-import-qr-ok">知道了</button>

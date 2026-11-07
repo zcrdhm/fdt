@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -50,7 +51,8 @@ func NewLiveClient(cfg LiveConfig, applicantResolver func(string) (string, error
 		cfg.BaseURL = "https://open.feishu.cn"
 	}
 	if cfg.UserIDType == "" {
-		cfg.UserIDType = "open_id"
+		// Portal「飞书 ID」页绑定的是飞书管理后台「用户 ID」(user_id)，默认与此对齐。
+		cfg.UserIDType = "user_id"
 	}
 	return &LiveClient{cfg: cfg, http: &http.Client{Timeout: 15 * time.Second}, resolver: applicantResolver}
 }
@@ -100,10 +102,18 @@ func (c *LiveClient) CreateApprovalInstance(ctx context.Context, r CreateInstanc
 	if code == "" {
 		return nil, fmt.Errorf("feishu: 未配置审批定义 code（direction=%s）", r.Direction)
 	}
+	idType := c.cfg.UserIDType
+	if idType == "" {
+		idType = "user_id"
+	}
+	// 配置为 user_id 但传入的是 open_id（ou_…）时，按 open_id 提交，避免 1390001。
+	if idType == "user_id" && strings.HasPrefix(uid, "ou_") {
+		idType = "open_id"
+	}
 	payload := map[string]any{
-		"approval_code":  code,
-		c.cfg.UserIDType: uid,
-		"form":           formJSON,
+		"approval_code": code,
+		idType:          uid,
+		"form":          formJSON,
 	}
 	body, _ := json.Marshal(payload)
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost,

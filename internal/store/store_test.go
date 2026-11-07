@@ -192,4 +192,11 @@ func TestFilesPersisted(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("files = %d, want 2", len(got))
 	}
+	names, err := s.PhysicalFileNames(ctx, []string{"req-5"}, 12)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(names["req-5"]) != 1 || names["req-5"][0] != "a.go" {
+		t.Fatalf("physical names = %#v", names["req-5"])
+	}
 }

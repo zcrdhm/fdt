@@ -18,9 +18,11 @@ type FormWidget struct {
 // DefaultFormWidgets is the field set the approval definition must contain.
 // Replace ID with the widget id Feishu assigns; the field names are stable.
 func DefaultFormWidgets() []FormWidget {
+	// Keep in sync with config/feishu-form.example.json and docs §8.
+	// Direction (导入/导出) is already rendered inside ManifestText — do not
+	// require a separate Feishu widget named "direction".
 	return []FormWidget{
 		{ID: "req_id", Type: "input", Field: "req_id"},
-		{ID: "direction", Type: "input", Field: "direction"},
 		{ID: "applicant", Type: "input", Field: "applicant"},
 		{ID: "dept", Type: "input", Field: "dept"},
 		{ID: "reason", Type: "textarea", Field: "reason"},

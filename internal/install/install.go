@@ -156,7 +156,8 @@ func installIntranet(opt Options, lay Layout) error {
 	fmt.Println("✅ 内网一键安装完成")
 	fmt.Printf("  配置: %s\n", lay.EnvFile)
 	fmt.Printf("  数据: %s\n", lay.Var)
-	fmt.Printf("  Portal: http://<本机IP>%s/  （统一端口，含 /data /import）\n", portOf(opt.Listen))
+	fmt.Printf("  Portal UI: http://<本机IP>%s/  （LISTEN 可改；勿对 ATM 网段开放）\n", portOf(opt.Listen))
+	fmt.Println("  ATM 数据口: 0.0.0.0:8081  （固定；仅 /data /import，无页面）")
 	fmt.Printf("  管理后台: http://<本机IP>%s/admin/  用户 admin\n", portOf(opt.Listen))
 	fmt.Printf("  管理密码: %s  （PORTAL_ADMIN_PASSWORD，可改 fdt.env）\n", portalAdminPass)
 	fmt.Println()
@@ -165,7 +166,7 @@ func installIntranet(opt Options, lay Layout) error {
 	fmt.Printf("  ATM机:  %s\n", filepath.Join(lay.Outbox, opt.DeviceID+".tgz"))
 	fmt.Println()
 	fmt.Println("网关机: sudo ./fdt install gateway --bundle gateway.tgz")
-	fmt.Printf("ATM机:  sudo ./fdt install atm --bundle %s.tgz --server http://<内网IP>%s\n", opt.DeviceID, portOf(opt.Listen))
+	fmt.Printf("ATM机:  sudo ./fdt install atm --bundle %s.tgz --server http://<内网IP>:8081\n", opt.DeviceID)
 	return nil
 }
 
@@ -347,8 +348,12 @@ func installATM(opt Options, lay Layout) error {
 		"ATM_UI_LISTEN": "0.0.0.0:9080",
 		"ATM_MAINT_PASSWORD": "fdt-maint",
 		"ATM_MAINT_PASSWORD_FILE": filepath.Join(lay.Var, "atm_maint_password"),
+		"ATM_IMPORT_FIELDS": filepath.Join(lay.Etc, "import-fields.json"),
 	}
 	if err := writeEnv(lay.EnvFile, env); err != nil {
+		return err
+	}
+	if err := writeATMImportFieldsExample(filepath.Join(lay.Etc, "import-fields.json")); err != nil {
 		return err
 	}
 	// ATM is interactive; install helper scripts instead of a long-running unit.
@@ -594,6 +599,43 @@ func extractBundle(path, dest string) error {
 			return err
 		}
 	}
+}
+
+func writeATMImportFieldsExample(path string) error {
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	}
+	const body = `{
+  "version": 1,
+  "fields": [
+    {
+      "key": "reason",
+      "label": "事由",
+      "type": "text",
+      "required": true,
+      "default": "导入资料",
+      "order": 10,
+      "enabled": true,
+      "builtin": true
+    },
+    {
+      "key": "cls",
+      "label": "密级",
+      "type": "select",
+      "required": true,
+      "options": ["internal", "confidential", "secret"],
+      "default": "confidential",
+      "order": 20,
+      "enabled": true,
+      "builtin": true
+    }
+  ]
+}
+`
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(body), 0o644)
 }
 
 type envMap map[string]string

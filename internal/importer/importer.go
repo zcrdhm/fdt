@@ -45,12 +45,13 @@ type Service struct {
 
 // ImportRequest is what the ATM sends after indexing the source USB.
 type ImportRequest struct {
-	Applicant model.Applicant
-	Reason    string
-	Cls       model.Classification
-	Dataset   model.Dataset     // manifest built by the ATM from the USB
-	Entries   []model.FileEntry // full per-file detail to persist
-	USBSerial string
+	Applicant model.Applicant      `json:"applicant"`
+	Reason    string               `json:"reason"`
+	Cls       model.Classification `json:"cls"`
+	Dataset   model.Dataset        `json:"dataset"`
+	Entries   []model.FileEntry    `json:"entries"`
+	USBSerial string               `json:"usbSerial"`
+	Extras    map[string]string    `json:"extras,omitempty"`
 }
 
 // ImportCreateResult is returned to the ATM: the QR#1 frame to show for scanning.
@@ -81,10 +82,12 @@ func (s *Service) CreateImportRequest(ctx context.Context, in ImportRequest) (*I
 	if err != nil {
 		return nil, err
 	}
-	ttl := s.QRTTL
-	if ttl <= 0 {
-		ttl = 10 * time.Minute
+	// QR#1 扫码窗口仍用 QRTTL；申请单/隔离区保留更长，便于离开 ATM 后再扫 QR#2 放行。
+	qrTTL := s.QRTTL
+	if qrTTL <= 0 {
+		qrTTL = 10 * time.Minute
 	}
+	holdTTL := 72 * time.Hour
 	now := time.Now()
 	quarantine := filepath.Join(s.QuarantineRoot, reqID)
 
@@ -95,7 +98,7 @@ func (s *Service) CreateImportRequest(ctx context.Context, in ImportRequest) (*I
 		FileCount: in.Dataset.Count, TotalSize: in.Dataset.TotalSize,
 		MerkleRoot: in.Dataset.MerkleRoot, ManifestMode: in.Dataset.Mode,
 		AVStatus: in.Dataset.DLP.AV, DataDir: quarantine,
-		CreatedAt: now, ExpiresAt: now.Add(ttl),
+		CreatedAt: now, ExpiresAt: now.Add(holdTTL), Extras: in.Extras,
 	}
 	if err := s.Store.CreateRequest(ctx, r); err != nil {
 		return nil, err
@@ -110,7 +113,7 @@ func (s *Service) CreateImportRequest(ctx context.Context, in ImportRequest) (*I
 	tok := &model.RequestToken{
 		ReqID: reqID, Dir: model.DirImport, Applicant: in.Applicant,
 		Reason: in.Reason, Cls: in.Cls, Dataset: in.Dataset, Tenant: s.Tenant,
-		Nonce: nonce, Iat: now.Unix(), Exp: now.Add(ttl).Unix(),
+		Extras: in.Extras, Nonce: nonce, Iat: now.Unix(), Exp: now.Add(qrTTL).Unix(),
 	}
 	frame, err := token.SignRequest(s.Signer, tok)
 	if err != nil {
@@ -133,7 +136,7 @@ func (s *Service) CreateImportRequest(ctx context.Context, in ImportRequest) (*I
 // ImportResult is the outcome of a release attempt.
 type ImportResult struct {
 	ReqID        string       `json:"reqId"`
-	Status       store.Status `json:"status"` // RELEASED | BLOCKED
+	Status       store.Status `json:"status"` // RELEASED | BLOCKED | QUARANTINED
 	ReleasedDir  string       `json:"releasedDir,omitempty"`
 	Released     []string     `json:"released,omitempty"`
 	Findings     []string     `json:"findings,omitempty"`
@@ -141,10 +144,54 @@ type ImportResult struct {
 	MerkleRoot   string       `json:"merkleRoot"`
 }
 
-// ReceiveAndRelease verifies QR#2, ingests the uploaded tar into quarantine,
-// re-hashes it (must equal the approved Merkle root — this is the anti-swap
-// check), scans, and releases or blocks. Consumption is one-shot via CAS.
-func (s *Service) ReceiveAndRelease(ctx context.Context, reqID, qr2Frame string, body io.Reader, atmID string) (*ImportResult, error) {
+// StageContent stores the USB tar in quarantine and checks Merkle against the
+// request created at StartImport. No QR#2 yet — user may leave; later ReleaseStaged.
+func (s *Service) StageContent(ctx context.Context, reqID string, body io.Reader, atmID string) (*ImportResult, error) {
+	req, err := s.Store.GetRequest(ctx, reqID)
+	if err != nil {
+		return nil, err
+	}
+	if req.Dir != model.DirImport {
+		return nil, ErrWrongDirection
+	}
+	if req.Status == store.StatusReleased || req.Status == store.StatusBlocked {
+		return nil, ErrAlreadyDone
+	}
+	if req.Status == store.StatusQuarantined {
+		// Idempotent re-stage: replace quarantine contents.
+	}
+	quarantine := filepath.Join(s.QuarantineRoot, reqID)
+	_ = os.RemoveAll(quarantine)
+	if err := os.MkdirAll(quarantine, 0o755); err != nil {
+		return nil, err
+	}
+	written, rootHex, err := extractAndHash(body, quarantine)
+	if err != nil {
+		_ = os.RemoveAll(quarantine)
+		_, _ = s.Store.AppendAudit(ctx, "importer", atmID, reqID, "import_ingest_failed", map[string]string{"err": err.Error()})
+		return nil, err
+	}
+	if rootHex != req.MerkleRoot {
+		_ = os.RemoveAll(quarantine)
+		_, _ = s.Store.AppendAudit(ctx, "importer", atmID, reqID, "import_merkle_mismatch", map[string]string{
+			"expected": req.MerkleRoot, "got": rootHex,
+		})
+		return nil, ErrImportMismatch
+	}
+	_ = s.Store.SetStatus(ctx, reqID, store.StatusQuarantined)
+	_ = s.Store.SetDataDir(ctx, reqID, quarantine)
+	_, _ = s.Store.AppendAudit(ctx, "importer", atmID, reqID, "import_staged", map[string]any{
+		"bytes": written, "merkle": rootHex,
+	})
+	return &ImportResult{
+		ReqID: reqID, Status: store.StatusQuarantined,
+		WrittenBytes: written, MerkleRoot: rootHex,
+	}, nil
+}
+
+// ReleaseStaged verifies QR#2 and moves an already-staged quarantine tree to the
+// release directory (scan + one-shot consume). Does not need the USB.
+func (s *Service) ReleaseStaged(ctx context.Context, reqID, qr2Frame, atmID string) (*ImportResult, error) {
 	rel, err := token.OpenRelease(qr2Frame, s.GatewayPub)
 	if err != nil {
 		return nil, fmt.Errorf("importer: QR#2 verify: %w", err)
@@ -176,6 +223,12 @@ func (s *Service) ReceiveAndRelease(ctx context.Context, reqID, qr2Frame string,
 	if tok.Consumed {
 		return nil, ErrAlreadyDone
 	}
+
+	quarantine := filepath.Join(s.QuarantineRoot, reqID)
+	if st, err := os.Stat(quarantine); err != nil || !st.IsDir() {
+		return nil, fmt.Errorf("importer: 隔离区无数据，请先在 ATM 完成上传（建单时会自动上传）")
+	}
+
 	leaseTTL := s.LeaseTTL
 	if leaseTTL == 0 {
 		leaseTTL = 5 * time.Minute
@@ -185,34 +238,11 @@ func (s *Service) ReceiveAndRelease(ctx context.Context, reqID, qr2Frame string,
 	}
 
 	started := time.Now()
-	_ = s.Store.SetStatus(ctx, reqID, store.StatusQuarantined)
-	quarantine := filepath.Join(s.QuarantineRoot, reqID)
-	_ = os.RemoveAll(quarantine)
-	if err := os.MkdirAll(quarantine, 0o755); err != nil {
-		return nil, err
-	}
-
-	written, rootHex, err := extractAndHash(body, quarantine)
-	if err != nil {
-		_ = os.RemoveAll(quarantine)
-		_ = s.Store.Release(ctx, reqID, atmID)
-		_, _ = s.Store.AppendAudit(ctx, "importer", atmID, reqID, "import_ingest_failed", map[string]string{"err": err.Error()})
-		return nil, err
-	}
-	// Anti-swap: uploaded bytes must match the fingerprint that was approved.
-	if rootHex != req.MerkleRoot {
-		_ = os.RemoveAll(quarantine)
-		_ = s.Store.Release(ctx, reqID, atmID)
-		_, _ = s.Store.AppendAudit(ctx, "importer", atmID, reqID, "import_merkle_mismatch", map[string]string{
-			"expected": req.MerkleRoot, "got": rootHex,
-		})
-		return nil, ErrImportMismatch
-	}
-
 	_ = s.Store.SetStatus(ctx, reqID, store.StatusScanning)
 	scan, err := s.Scanner.Scan(ctx, quarantine)
 	if err != nil {
 		_ = s.Store.Release(ctx, reqID, atmID)
+		_ = s.Store.SetStatus(ctx, reqID, store.StatusQuarantined)
 		_, _ = s.Store.AppendAudit(ctx, "importer", atmID, reqID, "import_scan_failed", map[string]string{"err": err.Error()})
 		return nil, err
 	}
@@ -220,25 +250,24 @@ func (s *Service) ReceiveAndRelease(ctx context.Context, reqID, qr2Frame string,
 		_ = s.Store.SetStatus(ctx, reqID, store.StatusBlocked)
 		_ = s.Store.RecordUSBOp(ctx, &store.USBOp{
 			RequestID: reqID, ATMID: atmID, Dir: "import", StartedAt: started,
-			FinishedAt: time.Now(), WrittenBytes: written, VerifiedMerkle: rootHex, Result: "blocked",
+			FinishedAt: time.Now(), VerifiedMerkle: req.MerkleRoot, Result: "blocked",
 		})
 		_, _ = s.Store.AppendAudit(ctx, "importer", atmID, reqID, "import_blocked", map[string]any{
 			"findings": scan.Findings, "engine": scan.Engine,
 		})
-		// Quarantine is retained for forensics; lease released, token NOT consumed.
 		_ = s.Store.Release(ctx, reqID, atmID)
 		return &ImportResult{ReqID: reqID, Status: store.StatusBlocked, Findings: scan.Findings,
-			WrittenBytes: written, MerkleRoot: rootHex}, ErrBlocked
+			MerkleRoot: req.MerkleRoot}, ErrBlocked
 	}
 
-	// Release: move quarantine -> target/<reqId>.
 	target := filepath.Join(s.TargetRoot, reqID)
 	released, err := moveDir(quarantine, target)
 	if err != nil {
 		_ = s.Store.Release(ctx, reqID, atmID)
+		_ = s.Store.SetStatus(ctx, reqID, store.StatusQuarantined)
 		return nil, err
 	}
-	ok, err := s.Store.Consume(ctx, reqID, atmID, "", rel.FsApprovalID, rootHex)
+	ok, err := s.Store.Consume(ctx, reqID, atmID, "", rel.FsApprovalID, req.MerkleRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -249,16 +278,28 @@ func (s *Service) ReceiveAndRelease(ctx context.Context, reqID, qr2Frame string,
 	}
 	_ = s.Store.SetStatus(ctx, reqID, store.StatusReleased)
 	_ = s.Store.SetDataDir(ctx, reqID, target)
+	if rel.Applicant.ID != "" || rel.Applicant.Name != "" {
+		_ = s.Store.SetApplicant(ctx, reqID, rel.Applicant.ID, rel.Applicant.Name, rel.Applicant.Dept)
+	}
 	_ = s.Store.RecordUSBOp(ctx, &store.USBOp{
 		RequestID: reqID, ATMID: atmID, Dir: "import", StartedAt: started,
-		FinishedAt: time.Now(), WrittenBytes: written, VerifiedMerkle: rootHex, Result: "success",
+		FinishedAt: time.Now(), VerifiedMerkle: req.MerkleRoot, Result: "success",
 	})
 	_, _ = s.Store.AppendAudit(ctx, "importer", atmID, reqID, "import_released", map[string]any{
-		"target": target, "files": len(released), "merkle": rootHex, "fsApprovalId": rel.FsApprovalID,
-		"scanEngine": scan.Engine,
+		"target": target, "files": len(released), "merkle": req.MerkleRoot, "fsApprovalId": rel.FsApprovalID,
+		"scanEngine": scan.Engine, "applicantId": rel.Applicant.ID,
 	})
 	return &ImportResult{ReqID: reqID, Status: store.StatusReleased, ReleasedDir: target,
-		Released: released, WrittenBytes: written, MerkleRoot: rootHex}, nil
+		Released: released, MerkleRoot: req.MerkleRoot}, nil
+}
+
+// ReceiveAndRelease is the legacy one-shot path (upload+QR#2 together). Prefer
+// StageContent then ReleaseStaged so the operator need not wait at the ATM.
+func (s *Service) ReceiveAndRelease(ctx context.Context, reqID, qr2Frame string, body io.Reader, atmID string) (*ImportResult, error) {
+	if _, err := s.StageContent(ctx, reqID, body, atmID); err != nil {
+		return nil, err
+	}
+	return s.ReleaseStaged(ctx, reqID, qr2Frame, atmID)
 }
 
 // extractAndHash writes a tar into dest, hashing each file, and returns bytes

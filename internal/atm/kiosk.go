@@ -67,9 +67,9 @@ type Kiosk struct {
 	importPaths map[string][]string // reqID → selected USB-relative paths for inbound import
 }
 
-// WriteProgress is emitted during ProcessScan for UI / CLI progress bars.
+// WriteProgress is emitted during export redeem / import upload for UI bars.
 type WriteProgress struct {
-	Phase     string   `json:"phase"` // verifying | writing | done
+	Phase     string   `json:"phase"` // indexing|creating|uploading|verifying|writing|releasing|done
 	Written   int64    `json:"written"`
 	Total     int64    `json:"total"`
 	FileName  string   `json:"fileName,omitempty"`
@@ -179,19 +179,18 @@ func (k *Kiosk) ProcessScan(ctx context.Context, frame string) (*RedeemResult, e
 		return nil, ErrRootMismatch
 	}
 
-	// 5. Capacity pre-check before claiming/writing.
-	var totalSize int64
-	fileNames := make([]string, 0, len(man.Files))
-	for _, f := range man.Files {
-		totalSize += f.Size
-		if f.Path != "" {
-			fileNames = append(fileNames, f.Path)
+	// 5. Capacity / FS pre-check before claiming/writing.
+	// Soft-reject only: never Claim/Consume here so the same QR#2 can retry after swapping USB.
+	totalSize, fileNames, preErr := checkUSBForExport(dev, man.Files)
+	if preErr != nil {
+		event := "usb_precheck_failed"
+		if errors.Is(preErr, ErrInsufficientSpace) {
+			event = "insufficient_space"
+		} else if errors.Is(preErr, ErrFilesystemLimit) {
+			event = "filesystem_limit"
 		}
-	}
-	if dev.FreeBytes() < totalSize {
-		k.fail(ctx, reqID, dev.Serial(), "insufficient_space",
-			fmt.Errorf("%w: need %d, free %d", ErrInsufficientSpace, totalSize, dev.FreeBytes()))
-		return nil, ErrInsufficientSpace
+		k.softReject(ctx, reqID, dev.Serial(), event, preErr)
+		return nil, preErr
 	}
 
 	// 6. Lease to narrow the concurrent-double-write window.
@@ -435,6 +434,18 @@ func (k *Kiosk) fail(ctx context.Context, reqID, serial, event string, err error
 	k.mu.Unlock()
 	_, _ = k.Store.AppendAudit(ctx, "atm:"+k.ID, k.ID, reqID, event, map[string]string{
 		"usbSerial": serial, "err": err.Error(),
+	})
+}
+
+// softReject records a recoverable USB/media problem without consuming the token.
+// State stays READY so the operator can swap the stick and scan the same QR#2 again.
+func (k *Kiosk) softReject(ctx context.Context, reqID, serial, event string, err error) {
+	k.mu.Lock()
+	k.lastErr = err
+	k.state = StateReady
+	k.mu.Unlock()
+	_, _ = k.Store.AppendAudit(ctx, "atm:"+k.ID, k.ID, reqID, event, map[string]string{
+		"usbSerial": serial, "err": err.Error(), "tokenConsumed": "false",
 	})
 }
 

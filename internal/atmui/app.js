@@ -4,6 +4,8 @@
   let stream = null;
   let scanTimer = null;
   let redeeming = false;
+  let importXferring = false;
+  let importRedeeming = false;
   let importReqId = '';
   let hasUSB = false;
   let usbMounted = false;
@@ -333,10 +335,13 @@
       return { title: '兑付冲突', body: '另一台终端正在兑付同一申请单，请稍后再试。\n\n' + m, kind: 'warn' };
     }
     if (/只读|写保护|NotWritable/i.test(m)) {
-      return { title: 'U 盘不可写', body: '当前 U 盘只读或开启了写保护，请更换可写 U 盘。\n\n' + m, kind: 'warn' };
+      return { title: 'U 盘不可写', body: '当前 U 盘只读或开启了写保护。\n放行码未核销，请更换可写 U 盘后重新扫码兑付。\n\n' + m, kind: 'warn' };
     }
     if (/空间不足|Insufficient/i.test(m)) {
-      return { title: '空间不足', body: 'U 盘剩余空间不够完成本次兑付，请清理或更换更大容量的 U 盘。\n\n' + m, kind: 'warn' };
+      return { title: '空间不足', body: 'U 盘剩余空间不够完成本次兑付。\n放行码（QR#2）未核销，请清理或更换更大容量的 U 盘后，用同一放行码重新扫码兑付。\n\n' + m, kind: 'warn' };
+    }
+    if (/文件系统|4GB|exFAT|FAT|FilesystemLimit/i.test(m)) {
+      return { title: '文件系统不兼容', body: '当前 U 盘格式无法写入本次数据（例如 FAT 单文件不能超过 4GB）。\n放行码（QR#2）未核销，请格式化为 exFAT/NTFS 或更换 U 盘后，用同一放行码重新扫码兑付。\n\n' + m, kind: 'warn' };
     }
     if (/验签|有效期|TokenInvalid|非法二维码|BadPayload/i.test(m)) {
       return { title: '令牌无效', body: 'QR#2 验签失败、已过期或内容非法。请确认网关公钥一致，并使用有效期内的放行码。\n\n' + m, kind: 'bad' };
@@ -421,6 +426,28 @@
       $('prog-wrap').classList.add('hidden');
     }
     renderRedeemProgress(s);
+    renderImportXferProgress(s);
+    renderImportRedeemProgress(s);
+  }
+
+  function fmtRate(bps) {
+    if (!bps || bps <= 0) return '';
+    return fmt(bps) + '/s';
+  }
+
+  function fmtEta(sec) {
+    if (sec == null || sec < 0) return '';
+    sec = Math.round(sec);
+    if (sec < 60) return '约 ' + sec + ' 秒';
+    if (sec < 3600) return '约 ' + Math.ceil(sec / 60) + ' 分钟';
+    return '约 ' + (sec / 3600).toFixed(1) + ' 小时';
+  }
+
+  function rateEtaText(s) {
+    const parts = [];
+    if (s.rateBps) parts.push(fmtRate(s.rateBps));
+    if (s.etaSec != null && s.busy && s.written < s.total) parts.push('剩余 ' + fmtEta(s.etaSec));
+    return parts.length ? ' · ' + parts.join(' · ') : '';
   }
 
   function renderRedeemProgress(s) {
@@ -428,14 +455,15 @@
     if (!box) return;
     const p = s.progress || {};
     const busy = !!s.busy;
-    const has = busy || p.phase === 'writing' || p.phase === 'done' || (p.files && p.files.length);
-    if (!has && !busy) {
+    const exportPhases = { verifying: 1, writing: 1, done: 1 };
+    const has = redeeming || (busy && exportPhases[p.phase]) || p.phase === 'writing' || p.phase === 'done' || (p.files && p.files.length);
+    if (!has) {
       if (!redeeming) box.classList.add('hidden');
       return;
     }
     box.classList.remove('hidden');
     const outDir = p.outDir || '';
-    $('redeem-path').textContent = outDir ? ('兑付路径：' + outDir) : (busy ? '兑付路径：准备中…' : '');
+    $('redeem-path').textContent = outDir ? ('兑付路径：' + outDir) : (busy || redeeming ? '兑付路径：准备中…' : '');
     const pct = s.percent != null ? s.percent : (s.total > 0 ? Math.round(s.written * 100 / s.total) : 0);
     if (p.fileName) {
       $('redeem-file').textContent = '正在写入：' + p.fileName +
@@ -445,13 +473,13 @@
     } else if (p.phase === 'done') {
       $('redeem-file').textContent = '写入完成';
     } else {
-      $('redeem-file').textContent = busy ? '兑付进行中…' : '';
+      $('redeem-file').textContent = (busy || redeeming) ? '兑付进行中…' : '';
     }
-    $('redeem-prog-wrap').classList.toggle('hidden', !(s.total > 0 || busy));
+    $('redeem-prog-wrap').classList.toggle('hidden', !(s.total > 0 || busy || redeeming));
     $('redeem-prog-bar').style.width = Math.min(100, pct) + '%';
     $('redeem-pct').textContent = s.total > 0
-      ? (fmt(s.written) + ' / ' + fmt(s.total) + ' · ' + pct + '%')
-      : '';
+      ? (fmt(s.written) + ' / ' + fmt(s.total) + ' · ' + pct + '%' + rateEtaText(s))
+      : ((busy || redeeming) ? '进行中…' : '');
     const list = $('redeem-files');
     const files = p.files || [];
     if (!files.length) {
@@ -465,6 +493,77 @@
       else if (p.phase === 'done') cls = 'done';
       return '<li class="' + cls + '" title="' + escAttr(name) + '">' + escAttr(name) + '</li>';
     }).join('');
+  }
+
+  function phaseLabelImport(phase) {
+    switch (phase) {
+      case 'indexing': return '正在索引 U 盘文件…';
+      case 'creating': return '正在创建导入申请…';
+      case 'uploading': return '正在上传到隔离区…';
+      case 'done': return '上传完成';
+      default: return '处理中…';
+    }
+  }
+
+  function renderImportXferProgress(s) {
+    const box = $('import-xfer-box');
+    if (!box) return;
+    const p = s.progress || {};
+    const uploadPhases = { indexing: 1, creating: 1, uploading: 1, done: 1 };
+    const show = importXferring || (s.busy && uploadPhases[p.phase]);
+    if (!show) {
+      if (!importXferring) box.classList.add('hidden');
+      return;
+    }
+    box.classList.remove('hidden');
+    const pct = s.percent != null ? s.percent : (s.total > 0 ? Math.round(s.written * 100 / s.total) : 0);
+    $('import-xfer-path').textContent = p.phase === 'done' ? '隔离区上传完成' : '请勿拔盘 · 上传进行中';
+    let fileLine = phaseLabelImport(p.phase);
+    if (p.fileCount && (p.phase === 'uploading' || p.phase === 'creating')) {
+      fileLine += '（约 ' + p.fileCount + ' 个文件）';
+    }
+    $('import-xfer-file').textContent = fileLine;
+    const wrap = $('import-xfer-prog-wrap');
+    const bar = $('import-xfer-prog-bar');
+    wrap.classList.remove('hidden');
+    const indeterminate = !s.total || p.phase === 'indexing' || p.phase === 'creating';
+    wrap.classList.toggle('indeterminate', indeterminate && p.phase !== 'done');
+    if (indeterminate && p.phase !== 'done') {
+      bar.style.width = '40%';
+    } else {
+      bar.style.width = Math.min(100, pct) + '%';
+    }
+    if (s.total > 0 && (p.phase === 'uploading' || p.phase === 'done')) {
+      $('import-xfer-pct').textContent = fmt(s.written) + ' / ' + fmt(s.total) + ' · ' + pct + '%' + rateEtaText(s);
+    } else if (p.phase === 'indexing') {
+      $('import-xfer-pct').textContent = '正在计算哈希 / 建清单（大文件可能较久）…';
+    } else if (p.phase === 'creating') {
+      $('import-xfer-pct').textContent = '正在创建导入申请…';
+    } else {
+      $('import-xfer-pct').textContent = s.written > 0 ? (fmt(s.written) + ' 已传' + rateEtaText(s)) : '准备上传…';
+    }
+  }
+
+  function renderImportRedeemProgress(s) {
+    const box = $('import-redeem-box');
+    if (!box) return;
+    const p = s.progress || {};
+    const show = importRedeeming || (s.busy && (p.phase === 'releasing' || p.phase === 'done'));
+    if (!show) {
+      if (!importRedeeming) box.classList.add('hidden');
+      return;
+    }
+    box.classList.remove('hidden');
+    if (p.phase === 'done' && !s.busy) {
+      $('import-redeem-file').textContent = '放行完成';
+    } else if (p.phase === 'releasing' || importRedeeming) {
+      $('import-redeem-file').textContent = '正在校验并放行隔离区（含扫描，大包可能较久）…';
+    } else {
+      $('import-redeem-file').textContent = '处理中…';
+    }
+    $('import-redeem-prog-wrap').classList.remove('hidden');
+    $('import-redeem-prog-bar').style.width = (p.phase === 'done' && !s.busy) ? '100%' : '35%';
+    $('import-redeem-pct').textContent = (p.phase === 'done' && !s.busy) ? '完成' : '进行中…';
   }
 
   function escAttr(s) {
@@ -537,7 +636,7 @@
     return (n / 1073741824).toFixed(2) + ' GB';
   }
 
-  const TABS = ['export', 'import'];
+  const TABS = ['export', 'import', 'import-redeem'];
 
   function tabFromHash() {
     const h = (location.hash || '').replace(/^#\/?/, '');
@@ -551,6 +650,7 @@
     });
     $('panel-export').classList.toggle('hidden', name !== 'export');
     $('panel-import').classList.toggle('hidden', name !== 'import');
+    $('panel-import-redeem').classList.toggle('hidden', name !== 'import-redeem');
     if (!(opts && opts.skipHash) && location.hash !== '#' + name) {
       history.replaceState(null, '', '#' + name);
     }
@@ -651,12 +751,12 @@
     $('cam-hint').classList.remove('off');
     $('cam-hint').textContent = '正在打开摄像头…';
     if ($('cam-modal-title')) {
-      $('cam-modal-title').textContent = camPurpose === 'import' ? '扫码完成导入' : '扫码兑付';
+      $('cam-modal-title').textContent = camPurpose === 'import' ? '导入兑付 · 扫 QR#2' : '导出兑付 · 扫 QR#2';
     }
     if ($('cam-modal-hint')) {
       $('cam-modal-hint').textContent = camPurpose === 'import'
-        ? '请将审批后的放行码（QR#2）对准框内，识别成功后自动完成导入。'
-        : '请将飞书放行码（QR#2）对准框内，识别成功后自动兑付。';
+        ? '请将审批后的放行码（QR#2）对准框内。无需 U 盘，识别后自动放行隔离区数据。'
+        : '请将飞书放行码（QR#2）对准框内，识别成功后自动兑付到 U 盘。';
     }
   }
 
@@ -792,6 +892,63 @@
     if (e.target === $('cam-modal')) stopCam('已取消，摄像头已关闭');
   };
 
+  let importFieldDefs = [];
+
+  function splitOpt(o) {
+    const s = String(o || '');
+    const i = s.indexOf('|');
+    if (i >= 0) return { value: s.slice(0, i).trim(), label: s.slice(i + 1).trim() };
+    return { value: s, label: s };
+  }
+
+  function renderImportFields(fields) {
+    const box = $('import-fields');
+    if (!box) return;
+    importFieldDefs = Array.isArray(fields) ? fields : [];
+    box.innerHTML = importFieldDefs.map((f) => {
+      const id = 'imp-f-' + f.key;
+      const hint = f.hint ? '<div class="hint" style="margin:0 0 6px">' + escAttr(f.hint) + '</div>' : '';
+      let ctrl = '';
+      if (f.type === 'textarea') {
+        ctrl = '<textarea id="' + id + '" rows="3" data-imp-key="' + escAttr(f.key) + '">' +
+          escAttr(f.default || '') + '</textarea>';
+      } else if (f.type === 'select') {
+        const opts = (f.options || []).map((o) => {
+          const p = splitOpt(o);
+          const sel = p.value === (f.default || '') ? ' selected' : '';
+          return '<option value="' + escAttr(p.value) + '"' + sel + '>' + escAttr(p.label) + '</option>';
+        }).join('');
+        ctrl = '<select id="' + id + '" data-imp-key="' + escAttr(f.key) + '">' + opts + '</select>';
+      } else {
+        const typ = f.type === 'number' ? 'number' : 'text';
+        ctrl = '<input id="' + id + '" type="' + typ + '" data-imp-key="' + escAttr(f.key) +
+          '" value="' + escAttr(f.default || '') + '" />';
+      }
+      return '<label>' + escAttr(f.label) + (f.required ? ' *' : '') + '</label>' + hint + ctrl;
+    }).join('');
+  }
+
+  function collectImportFields() {
+    const out = {};
+    document.querySelectorAll('[data-imp-key]').forEach((el) => {
+      out[el.getAttribute('data-imp-key')] = (el.value || '').trim();
+    });
+    return out;
+  }
+
+  async function loadImportFields() {
+    try {
+      const d = await api('/api/import/fields');
+      renderImportFields(d.fields || []);
+    } catch (e) {
+      renderImportFields([
+        { key: 'reason', label: '事由', type: 'text', required: true, default: '导入资料' },
+        { key: 'cls', label: '密级', type: 'select', required: true, default: 'confidential',
+          options: ['internal', 'confidential', 'secret'] },
+      ]);
+    }
+  }
+
   function updateImportUSBControls() {
     const browse = $('btn-usb-browse');
     const clear = $('btn-usb-clear');
@@ -918,29 +1075,51 @@
       await showModal('未选择文件', '请点「浏览 U 盘」，勾选要导入的文件或目录。', 'warn');
       return;
     }
-    $('import-out').textContent = '建单中…';
+    importXferring = true;
+    $('btn-import-start').disabled = true;
+    $('import-out').textContent = '建单并上传隔离区中（可较久，请勿拔盘）…';
+    $('import-xfer-box').classList.remove('hidden');
+    $('import-xfer-path').textContent = '请勿拔盘 · 上传进行中';
+    $('import-xfer-file').textContent = '正在索引 U 盘文件…';
+    $('import-xfer-prog-wrap').classList.remove('hidden');
+    $('import-xfer-prog-wrap').classList.add('indeterminate');
+    $('import-xfer-prog-bar').style.width = '40%';
+    $('import-xfer-pct').textContent = '正在计算哈希 / 建清单（大文件可能较久）…';
+    const poll = setInterval(refresh, 400);
     try {
+      const fields = collectImportFields();
       const r = await api('/api/import/start', {
         method: 'POST',
         body: JSON.stringify({
-          reason: $('imp-reason').value,
-          cls: $('imp-cls').value,
+          fields: fields,
+          reason: fields.reason || '',
+          cls: fields.cls || '',
           paths: paths,
         }),
       });
       importReqId = r.reqId;
-      const meta = '申请单 ' + r.reqId + ' · ' + r.count + ' 文件 · Merkle ' + r.merkleRoot;
+      const shortMeta = r.count + ' 个文件已进隔离区 · 扫码后可拔盘 · 审批后到「导入兑付」';
+      const fullMeta = '申请单 ' + r.reqId + ' · ' + r.count + ' 文件 · Merkle ' + r.merkleRoot +
+        '\n数据已进隔离区。请用飞书扫 QR#1；之后可拔盘离开，审批通过后到「导入兑付」扫 QR#2。';
       $('import-qr').src = 'data:image/png;base64,' + r.qr1PngBase64;
-      $('import-qr-meta').textContent = meta;
-      $('import-meta').textContent = meta;
+      $('import-qr-meta').textContent = shortMeta;
+      $('import-meta').textContent = fullMeta;
       $('import-complete').classList.remove('hidden');
       $('btn-import-show-qr').classList.remove('hidden');
-      $('import-out').textContent = 'QR#1 已生成。已选 ' + paths.length + ' 项。用飞书扫码审批，通过后把 QR#2 填下方。';
+      $('import-out').textContent = '上传完成 · QR#1 已生成。可用飞书扫码；通过后到「导入兑付」。';
+      $('import-xfer-path').textContent = '隔离区上传完成';
+      $('import-xfer-file').textContent = '上传完成';
+      $('import-xfer-prog-bar').style.width = '100%';
       refresh();
       openImportQrModal();
     } catch (e) {
       $('import-out').textContent = '失败: ' + (e.message || e);
       await alertError(e.message || e);
+    } finally {
+      clearInterval(poll);
+      importXferring = false;
+      updateImportUSBControls();
+      refresh();
     }
   };
 
@@ -968,30 +1147,47 @@
   };
 
   async function completeImport(frame) {
-    const reqId = importReqId;
-    if (!reqId || !frame) {
-      $('import-out').textContent = '缺少申请单或 QR#2';
-      await showModal('缺少信息', '请先生成 QR#1，并粘贴或扫描审批后的 QR#2。', 'warn');
+    frame = (frame || '').trim();
+    const out = $('import-redeem-out');
+    if (!frame) {
+      out.textContent = '缺少 QR#2';
+      await showModal('缺少放行码', '请扫描或粘贴审批通过后的 QR#2。无需再插 U 盘。', 'warn');
       return;
     }
-    if (!requireUSB('完成导入')) return;
-    $('import-out').textContent = '导入中…';
+    importRedeeming = true;
+    out.textContent = '兑付放行中…';
+    $('import-redeem-box').classList.remove('hidden');
+    $('import-redeem-file').textContent = '正在校验并放行隔离区（含扫描，大包可能较久）…';
+    $('import-redeem-prog-bar').style.width = '20%';
+    $('import-redeem-pct').textContent = '进行中…';
+    const poll = setInterval(refresh, 400);
     try {
       const r = await api('/api/import/complete', {
-        method: 'POST', body: JSON.stringify({ reqId, frame }),
+        method: 'POST',
+        body: JSON.stringify({ reqId: importReqId || '', frame }),
       });
-      $('import-out').textContent = '✅ 导入完成\n状态 ' + r.status + '\n目录 ' + (r.releasedDir || '');
+      importReqId = r.reqId || importReqId;
+      out.textContent = '✅ 导入兑付完成\n状态 ' + r.status + '\n目录 ' + (r.releasedDir || '');
+      $('import-redeem-file').textContent = '放行完成';
+      $('import-redeem-prog-bar').style.width = '100%';
+      $('import-redeem-pct').textContent = '完成';
       refresh();
-      await showModal('导入完成', '状态 ' + r.status + '\n目录 ' + (r.releasedDir || ''), 'ok');
+      await showModal('导入兑付完成', '状态 ' + r.status + '\n目录 ' + (r.releasedDir || '') +
+        '\n可在 Portal「获取导入」下载。', 'ok');
     } catch (e) {
-      $('import-out').textContent = '失败: ' + (e.message || e);
+      out.textContent = '失败: ' + (e.message || e);
       await alertError(e.message || e);
+    } finally {
+      clearInterval(poll);
+      importRedeeming = false;
+      refresh();
     }
   }
 
   $('btn-import-done').onclick = () => completeImport(($('imp-frame').value || '').trim());
   $('btn-import-cam').onclick = () => startCam('import');
 
+  loadImportFields();
   refresh();
   setInterval(refresh, 1500);
   // 默认不开摄像头；点「扫码」开预览，失败则回退本机 CAMERA，扫完自动关。

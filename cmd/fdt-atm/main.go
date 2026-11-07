@@ -221,7 +221,7 @@ func runImport(ctx context.Context, st *store.Store, pub ed25519.PublicKey, usbM
 
 	switch phase {
 	case "start":
-		start, err := kiosk.StartImport(ctx, applicant, reason, cls, []string{"."})
+		start, err := kiosk.StartImport(ctx, applicant, reason, cls, []string{"."}, nil)
 		if err != nil {
 			fmt.Printf("导入发起失败 [状态=%s]: %v\n", kiosk.State(), err)
 			os.Exit(1)

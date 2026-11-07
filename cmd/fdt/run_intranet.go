@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -26,7 +27,12 @@ import (
 )
 
 func runIntranet(env map[string]string) error {
+	// Portal UI：LISTEN 可配（默认 8080）。ATM 数据口固定 8081，永不挂页面。
 	listen := envOr(env, "LISTEN", "0.0.0.0:8080")
+	atmListen := "0.0.0.0:8081"
+	if _, p, err := net.SplitHostPort(listen); err == nil && p == "8081" {
+		return fmt.Errorf("intranet: LISTEN 不能使用 8081（已固定为 ATM 数据口 /data /import）")
+	}
 	dataDir := envOr(env, "DATA_DIR", "/var/lib/fdt")
 	keys := envOr(env, "KEYS_DIR", "/etc/fdt/keys")
 	tenant := envOr(env, "TENANT", "default")
@@ -122,10 +128,17 @@ func runIntranet(env map[string]string) error {
 	}).Router()
 	dataH := datasvc.New(st).Router()
 
-	root := http.NewServeMux()
-	root.Handle("/", portalH)
-	root.Handle("/data/", http.StripPrefix("/data", dataH))
+	uiMux := http.NewServeMux()
+	uiMux.Handle("/", portalH)
+	uiMux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	})
 
+	atmMux := http.NewServeMux()
+	atmMux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	})
+	atmMux.Handle("/data/", http.StripPrefix("/data", dataH))
 	gwPubPath := filepath.Join(keys, "pk_gateway.pem")
 	if gwPub, err := crypto.ReadPublicPEM(gwPubPath); err == nil {
 		var scanner importer.Scanner = importer.RuleBasedScanner{}
@@ -137,53 +150,79 @@ func runIntranet(env map[string]string) error {
 			QuarantineRoot: quarantine, TargetRoot: target,
 			Tenant: tenant, QRTTL: 10 * time.Minute,
 		}
-		root.Handle("/import/", http.StripPrefix("/import", (&importer.Handler{Svc: imp}).Router()))
+		atmMux.Handle("/import/", http.StripPrefix("/import", (&importer.Handler{Svc: imp}).Router()))
 	} else {
 		log.Printf("import 禁用: %v", err)
 	}
+	// 8081 明确拒绝页面路径，防止误挂 Portal。
+	atmMux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" || r.URL.Path == "/admin" || strings.HasPrefix(r.URL.Path, "/admin/") ||
+			strings.HasPrefix(r.URL.Path, "/app") {
+			http.Error(w, "portal UI is on LISTEN (default :8080), not on ATM data port :8081", http.StatusNotFound)
+			return
+		}
+		http.NotFound(w, r)
+	})
 
-	srv := &http.Server{Addr: listen, Handler: root}
-	// TLS is opt-in (TLS=1 in fdt.env). Default HTTP keeps one-click deploy simple;
-	// turn on when you have terminated TLS or want ATM mTLS on the wire.
-	if env["TLS"] == "1" || env["TLS"] == "true" {
-		tlsCert := filepath.Join(keys, "server.pem")
-		tlsKey := filepath.Join(keys, "server.key")
-		ca := filepath.Join(keys, "device_ca.pem")
-		cert, err := tls.LoadX509KeyPair(tlsCert, tlsKey)
-		if err != nil {
-			return fmt.Errorf("TLS=1 but server cert missing: %w", err)
-		}
-		cfg := &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
-		if _, err := os.Stat(ca); err == nil {
-			mtls, err := deviceauth.ServerTLSConfig(mustReadFile(ca))
-			if err != nil {
-				return err
-			}
-			cfg.ClientAuth = tls.VerifyClientCertIfGiven
-			cfg.ClientCAs = mtls.ClientCAs
-		}
-		srv.TLSConfig = cfg
+	tlsCfg, err := intranetTLSConfig(env, keys)
+	if err != nil {
+		return err
 	}
 
-	go func() {
-		log.Printf("intranet listening on %s (UI /  data /data/  import /import/)", listen)
-		var err error
-		if srv.TLSConfig != nil {
-			err = srv.ListenAndServeTLS("", "")
-		} else {
-			err = srv.ListenAndServe()
-		}
-		if err != nil && err != http.ErrServerClosed {
-			log.Fatal(err)
-		}
-	}()
+	srvUI := &http.Server{Addr: listen, Handler: uiMux, TLSConfig: tlsCfg}
+	srvATM := &http.Server{Addr: atmListen, Handler: atmMux, TLSConfig: tlsCfg}
+	go serveIntranet(srvUI, "portal-ui", listen)
+	go serveIntranet(srvATM, "atm-data", atmListen)
+	log.Printf("intranet: Portal UI %s  |  ATM data fixed %s (/data /import only)", listen, atmListen)
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	<-stop
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	return srv.Shutdown(ctx)
+	_ = srvUI.Shutdown(ctx)
+	_ = srvATM.Shutdown(ctx)
+	return nil
+}
+
+func intranetTLSConfig(env map[string]string, keys string) (*tls.Config, error) {
+	if env["TLS"] != "1" && env["TLS"] != "true" {
+		return nil, nil
+	}
+	tlsCert := filepath.Join(keys, "server.pem")
+	tlsKey := filepath.Join(keys, "server.key")
+	ca := filepath.Join(keys, "device_ca.pem")
+	cert, err := tls.LoadX509KeyPair(tlsCert, tlsKey)
+	if err != nil {
+		return nil, fmt.Errorf("TLS=1 but server cert missing: %w", err)
+	}
+	cfg := &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
+	if _, err := os.Stat(ca); err == nil {
+		mtls, err := deviceauth.ServerTLSConfig(mustReadFile(ca))
+		if err != nil {
+			return nil, err
+		}
+		cfg.ClientAuth = tls.VerifyClientCertIfGiven
+		cfg.ClientCAs = mtls.ClientCAs
+	}
+	return cfg, nil
+}
+
+func serveIntranet(srv *http.Server, name, addr string) {
+	mode := "http"
+	if srv.TLSConfig != nil {
+		mode = "https"
+	}
+	log.Printf("%s listening on %s (%s)", name, addr, mode)
+	var err error
+	if srv.TLSConfig != nil {
+		err = srv.ListenAndServeTLS("", "")
+	} else {
+		err = srv.ListenAndServe()
+	}
+	if err != nil && err != http.ErrServerClosed {
+		log.Fatal(err)
+	}
 }
 
 func mustReadFile(p string) []byte {

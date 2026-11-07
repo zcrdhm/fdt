@@ -289,18 +289,42 @@
     }
   }
 
+  function fileNamesLabel(it) {
+    const names = it.fileNames || [];
+    if (!names.length) return '';
+    if (names.length === 1) return names[0];
+    if (names.length <= 3) return names.join('、');
+    return names.slice(0, 3).join('、') + ' 等 ' + (it.fileCount || names.length) + ' 个';
+  }
+
+  function itemTitle(it) {
+    return fileNamesLabel(it) || it.id;
+  }
+
+  function zipDownloadName(it) {
+    const names = it.fileNames || [];
+    if (names.length === 1) {
+      const base = String(names[0]).split('/').pop() || names[0];
+      return base.replace(/[/\\?%*:|"<>]/g, '_') + '.zip';
+    }
+    return 'fdt-import-' + it.id + '.zip';
+  }
+
   function histItemHTML(it) {
     const who = esc(it.applicantName || it.applicantId || '—');
     const reason = esc(it.reason || '');
     const dirTag = it.dir === 'import' ? '导入' : '导出';
     const canDL = !!it.downloadable;
+    const title = itemTitle(it);
+    const showId = title !== it.id;
     const dlBtn = canDL
-      ? '<a class="btn dl-btn" href="/requests/' + encodeURIComponent(it.id) + '/download" download="fdt-import-' +
-        esc(it.id) + '.zip" data-download="1">下载 ZIP</a>'
+      ? '<a class="btn dl-btn" href="/requests/' + encodeURIComponent(it.id) + '/download" download="' +
+        esc(zipDownloadName(it)) + '" data-download="1">下载 ZIP</a>'
       : '';
     return '<div class="hist-item" data-id="' + esc(it.id) + '">' +
       '<button type="button" class="hist-item-main" data-id="' + esc(it.id) + '">' +
-      '<div><div class="t1">' + esc(it.id) + '</div>' +
+      '<div><div class="t1 file-title" title="' + esc(title) + '">' + esc(title) + '</div>' +
+      (showId ? '<div class="t2 mono-id">' + esc(it.id) + '</div>' : '') +
       '<div class="t2">' + dirTag + ' · ' + who + ' · ' + esc(it.applicantId || '') +
       ' · ' + esc(it.cls || '') + ' · ' + (it.fileCount || 0) + ' 文件 · ' + fmtBytes(it.totalSize) +
       (canDL ? ' · <span class="dl-tag">可下载</span>' : '') +
@@ -325,14 +349,17 @@
       list.innerHTML = items.map((it) => {
         const who = esc(it.applicantName || it.applicantId || '—');
         const reason = esc(it.reason || '');
+        const title = itemTitle(it);
+        const showId = title !== it.id;
         return '<div class="hist-item import-dl-item">' +
-          '<div><div class="t1">' + esc(it.id) + '</div>' +
+          '<div><div class="t1 file-title" title="' + esc(title) + '">' + esc(title) + '</div>' +
+          (showId ? '<div class="t2 mono-id">' + esc(it.id) + '</div>' : '') +
           '<div class="t2">导入 · ' + who + ' · ' + esc(it.applicantId || '') +
           ' · ' + esc(it.cls || '') + ' · ' + (it.fileCount || 0) + ' 文件 · ' + fmtBytes(it.totalSize) +
           ' · ' + fmtTime(it.createdAt) +
           (reason ? '<br>' + reason : '') + '</div></div>' +
           '<a class="btn dl-btn primary-dl" href="/requests/' + encodeURIComponent(it.id) +
-          '/download" download="fdt-import-' + esc(it.id) + '.zip">下载 ZIP</a></div>';
+          '/download" download="' + esc(zipDownloadName(it)) + '">下载 ZIP</a></div>';
       }).join('');
     } catch (e) {
       $('imports-list').innerHTML = '';
@@ -363,7 +390,8 @@
     $('hist-err').textContent = '';
     try {
       const req = await api('/requests/' + encodeURIComponent(id));
-      $('hist-reqid').textContent = req.ID || req.id || id;
+      const names = req.fileNames || [];
+      $('hist-reqid').textContent = names.length ? fileNamesLabel(req) : (req.ID || req.id || id);
       $('hist-detail-meta').textContent =
         statusLabel(req.Status || req.status) + ' · ' +
         ((req.Dir || req.dir) === 'import' ? '导入' : '导出') + ' · ' +
@@ -372,7 +400,11 @@
       $('hist-qr').src = '/requests/' + encodeURIComponent(id) + '/qr1.png?t=' + Date.now();
       const extras = req.Extras || req.extras || {};
       const extraLines = Object.keys(extras).map((k) => '扩展.' + k + ': ' + extras[k]);
+      const fileLines = names.length
+        ? ['文件:'].concat(names.map((n) => '  - ' + n))
+        : [];
       $('hist-detail-body').textContent = [
+        '申请单: ' + (req.ID || req.id || id),
         '方向: ' + ((req.Dir || req.dir) === 'import' ? '导入' : '导出'),
         '事由: ' + (req.Reason || req.reason || ''),
         '密级: ' + (req.Cls || req.cls || ''),
@@ -384,7 +416,7 @@
         'U 盘: ' + (req.USBSerial || req.usbSerial || '—'),
         '飞书审批: ' + (req.FsApproval || req.fsApproval || '—'),
         '数据目录: ' + (req.DataDir || req.dataDir || '—'),
-      ].concat(extraLines).join('\n');
+      ].concat(fileLines).concat(extraLines).join('\n');
       setHistDownload(req, id);
       $('hist-detail').classList.remove('hidden');
     } catch (e) {

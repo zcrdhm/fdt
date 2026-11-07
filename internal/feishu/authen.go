@@ -77,11 +77,12 @@ func (c *LiveClient) UserFromAuthCode(ctx context.Context, code string) (*UserIn
 		Code int    `json:"code"`
 		Msg  string `json:"msg"`
 		Data struct {
-			OpenID  string `json:"open_id"`
-			UserID  string `json:"user_id"`
-			UnionID string `json:"union_id"`
-			Name    string `json:"name"`
-			EnName  string `json:"en_name"`
+			AccessToken string `json:"access_token"`
+			OpenID      string `json:"open_id"`
+			UserID      string `json:"user_id"`
+			UnionID     string `json:"union_id"`
+			Name        string `json:"name"`
+			EnName      string `json:"en_name"`
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
@@ -98,10 +99,70 @@ func (c *LiveClient) UserFromAuthCode(ctx context.Context, code string) (*UserIn
 		OpenID: out.Data.OpenID, UserID: out.Data.UserID,
 		UnionID: out.Data.UnionID, Name: name,
 	}
-	if c.ApplicantIDFor(u) == "" {
-		return nil, fmt.Errorf("feishu: auth response missing %s", c.cfg.UserIDType)
+	// Portal 绑定用的是飞书「用户 ID」(user_id)。免登响应常不带该字段，再查一次。
+	if u.UserID == "" {
+		if uid, n := c.lookupUserID(ctx, out.Data.AccessToken, u.OpenID); uid != "" {
+			u.UserID = uid
+			if u.Name == "" && n != "" {
+				u.Name = n
+			}
+		}
+	}
+	// 至少要有 open_id；user_id 缺省时由调用方回退（例如 whoami 仍可展示 open_id）。
+	if u.OpenID == "" && u.UserID == "" && u.UnionID == "" {
+		return nil, fmt.Errorf("feishu: auth response missing user identity")
 	}
 	return u, nil
+}
+
+// lookupUserID resolves Feishu user_id via user_info, then contact API by open_id.
+func (c *LiveClient) lookupUserID(ctx context.Context, userAccessToken, openID string) (userID, name string) {
+	if userAccessToken != "" {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet,
+			c.cfg.BaseURL+"/open-apis/authen/v1/user_info", nil)
+		req.Header.Set("Authorization", "Bearer "+userAccessToken)
+		if resp, err := c.http.Do(req); err == nil {
+			defer resp.Body.Close()
+			var out struct {
+				Code int `json:"code"`
+				Data struct {
+					UserID string `json:"user_id"`
+					Name   string `json:"name"`
+				} `json:"data"`
+			}
+			if json.NewDecoder(resp.Body).Decode(&out) == nil && out.Code == 0 && out.Data.UserID != "" {
+				return out.Data.UserID, out.Data.Name
+			}
+		}
+	}
+	if openID == "" {
+		return "", ""
+	}
+	tok, err := c.tenantToken(ctx)
+	if err != nil {
+		return "", ""
+	}
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet,
+		c.cfg.BaseURL+"/open-apis/contact/v3/users/"+openID+"?user_id_type=open_id", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return "", ""
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Code int `json:"code"`
+		Data struct {
+			User struct {
+				UserID string `json:"user_id"`
+				Name   string `json:"name"`
+			} `json:"user"`
+		} `json:"data"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&out) != nil || out.Code != 0 {
+		return "", ""
+	}
+	return out.Data.User.UserID, out.Data.User.Name
 }
 
 func (c *LiveClient) ApplicantIDFor(u *UserInfo) string {
@@ -116,6 +177,14 @@ func (c *LiveClient) ApplicantIDFor(u *UserInfo) string {
 	default:
 		return u.OpenID
 	}
+}
+
+// UserIDType returns the configured applicant id kind (open_id | user_id | union_id).
+func (c *LiveClient) UserIDType() string {
+	if c == nil || c.cfg.UserIDType == "" {
+		return "user_id"
+	}
+	return c.cfg.UserIDType
 }
 
 var _ IdentityFromCode = (*LiveClient)(nil)

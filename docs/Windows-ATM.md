@@ -88,8 +88,8 @@ DATA_DIR=C:\fdt-atm\var
 KEYS_DIR=C:\fdt-atm\etc\keys
 DEVICE_ID=atm-01
 DEVICE_SECRET=与内网签发一致
-DATA_URL=http://10.0.0.5:8080/data
-IMPORT_URL=http://10.0.0.5:8080/import
+DATA_URL=http://10.0.0.5:8081/data
+IMPORT_URL=http://10.0.0.5:8081/import
 
 # Windows：用 mock + 盘符，不要用 sysfs
 USB=mock
@@ -98,17 +98,21 @@ USB_DIR=E:\
 ATM_UI_LISTEN=127.0.0.1:9080
 ATM_MAINT_PASSWORD=fdt-maint
 ATM_MAINT_PASSWORD_FILE=C:\fdt-atm\var\atm_maint_password
+ATM_IMPORT_FIELDS=C:\fdt-atm\etc\import-fields.json
 
 # Windows 勿依赖；服务端摄像头未实现
 CAMERA=
 SCANNER=
 ```
 
+把仓库里的 `config/atm-import-fields.example.json` 拷成 `C:\fdt-atm\etc\import-fields.json`，按现场改「导入申请」字段（见 [一键部署.md](一键部署.md)「ATM 如何改导入申请表单字段」）。改完重启 `-ui` 进程。
+
 说明：
 
 - **`USB=mock` + `USB_DIR=E:\`**：把已插入并分配盘符的 U 盘当作工作目录（需可写）。换盘时改盘符或插到同一盘符。  
-- **`DATA_URL` / `IMPORT_URL`**：指向内网 Portal（ATM 须能访问该地址）。  
+- **`DATA_URL` / `IMPORT_URL`**：必须指向内网 **`:8081`** 的 `/data`、`/import`（不是 Portal 网页端口）。  
 - **`DEVICE_SECRET`**：与内网设备鉴权一致；不对则拉数/导入会 401。  
+- **`ATM_IMPORT_FIELDS`**：本机导入表单 JSON；与 Portal 无关。  
 - 路径可用正斜杠 `C:/fdt-atm/...`，Go 均可识别。
 
 ## 5. 启动
@@ -154,7 +158,7 @@ start "" "C:\Program Files\Google\Chrome\Application\chrome.exe" ^
 
 ## 6. 网络与权限
 
-- ATM ↔ 内网 Portal：放行 `DATA_URL` / `IMPORT_URL` 端口（默认 8080）。  
+- ATM ↔ 内网：只放行 **8081**（`/data` `/import`）；**不要**对 ATM 网段开放 Portal UI 端口（默认 8080）。  
 - 本机防火墙允许 `ATM_UI_LISTEN`（仅本机可改为 `127.0.0.1:9080`）。  
 - 杀软勿隔离 `fdt.exe` 与 U 盘写入路径。  
 - 浏览器扫码需允许摄像头权限（预览窗）。

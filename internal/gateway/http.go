@@ -42,6 +42,7 @@ func (h *Handler) Router() http.Handler {
 		_, _ = w.Write([]byte("ok"))
 	})
 	mux.HandleFunc("POST /submit", h.submit)
+	mux.HandleFunc("POST /whoami", h.whoami)
 	mux.HandleFunc("GET /qr2", h.qr2)
 	mux.HandleFunc("GET /qr2/png", h.qr2PNG)
 	mux.HandleFunc("GET /history", h.history)
@@ -51,10 +52,12 @@ func (h *Handler) Router() http.Handler {
 	if h.DualControl != nil {
 		mux.HandleFunc("POST /hsm/approve", h.approve)
 	}
-	mux.HandleFunc("GET /app/{$}", serveWebAppIndex)
-	mux.HandleFunc("GET /app", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/app/", http.StatusFound)
+	// Serve H5 at /app (no trailing slash). Feishu requestAuthCode matches the
+	// page URL against 重定向 URL exactly; keep this stable as https://host/app
+	mux.HandleFunc("GET /app/{$}", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/app", http.StatusFound)
 	})
+	mux.HandleFunc("GET /app", serveWebAppIndex)
 	mux.HandleFunc("GET /app/{path...}", serveWebAppAsset)
 	if h.MountAdmin != nil {
 		h.MountAdmin(mux)
@@ -137,6 +140,23 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, sub)
 }
 
+// whoami resolves the Feishu H5 authCode to the logged-in user (for webapp identity panel).
+func (h *Handler) whoami(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		AuthCode string `json:"authCode"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.AuthCode) == "" {
+		http.Error(w, "authCode required", http.StatusBadRequest)
+		return
+	}
+	info, err := h.Svc.ResolveIdentity(r.Context(), body.AuthCode)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, http.StatusOK, info)
+}
+
 func (h *Handler) qr2(w http.ResponseWriter, r *http.Request) {
 	reqID := r.URL.Query().Get("reqId")
 	if reqID == "" {
@@ -184,7 +204,7 @@ func (h *Handler) qr2PNG(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not approved yet", http.StatusAccepted)
 		return
 	}
-	png, err := qrcode.Encode(res.QR2Frame, qrcode.Low, 512)
+	png, err := qrcode.Encode(res.QR2Frame, qrcode.Medium, 1024)
 	if err != nil {
 		http.Error(w, "qr encode: "+err.Error(), http.StatusInternalServerError)
 		return
