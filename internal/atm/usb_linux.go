@@ -275,14 +275,14 @@ func guessFS(path string) string {
 }
 
 type sysfsDevice struct {
-	serial    string
-	mount     string
-	writable  bool
-	capacity  int64
-	free      int64
-	fs        string
-	block     string
-	node      string
+	serial   string
+	mount    string
+	writable bool
+	capacity int64
+	free     int64
+	fs       string
+	block    string
+	node     string
 }
 
 func (d *sysfsDevice) Serial() string       { return d.serial }
@@ -452,4 +452,13 @@ func freeBytes(path string) int64 {
 		return 0
 	}
 	return int64(st.Bavail) * int64(st.Bsize)
+}
+
+// WindowsUSB is only implemented on Windows; stub keeps cross-package references compiling on Linux.
+type WindowsUSB struct {
+	SkipLetters string
+}
+
+func (WindowsUSB) Detect() (Device, error) {
+	return nil, errors.New("atm: Windows USB detection is only supported on windows")
 }

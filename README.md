@@ -6,17 +6,16 @@
 
 ## 一键部署（推荐）
 
-交付物只有 **一个二进制 `fdt`**。每台机器一条命令：
+按角色交付瘦包（`make release`）：`fdt-gw` / `fdt-intranet` / `fdt-atm`；全能 `fdt` 仍可作安装器。同目录有瘦包时 `install` 会优先拷贝。
 
 ```bash
-make release                          # → dist/fdt
-sudo ./fdt install intranet           # 内网：密钥 + systemd + 打出 U 盘包
+make release                          # → dist/fdt-gw · fdt-intranet · fdt-atm · fdt
+sudo ./fdt install intranet           # 旁路有 fdt-intranet 则装瘦包
 sudo ./fdt install gateway --bundle gateway.tgz --mock
 sudo ./fdt install atm --bundle atm-01.tgz --server http://<内网IP>:8080
 ```
 
-内网安装后，U 盘只带走两个小包：`/var/lib/fdt/outbox/gateway.tgz`、`atm-01.tgz`（各角色只需自己的密钥）。配置只有 `/etc/fdt/fdt.env` 一个文件；服务一个端口（`/` UI，`/data/` 取数，`/import/` 导入）。
-
+内网安装后，U 盘只带走两个小包：`/var/lib/fdt/outbox/gateway.tgz`、`atm-01.tgz`（各角色只需自己的密钥）。配置只有 `/etc/fdt/fdt.env` 一个文件；服务一个端口（`/` UI，`/data/` 取数，`/import/` 导入）。详见 [docs/一键部署.md](docs/一键部署.md)。
 ## 架构（三个信任域）
 
 ```

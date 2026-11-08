@@ -1,8 +1,9 @@
-package main
+package inapp
 
 import (
 	"context"
 	"crypto/tls"
+	"fdt/internal/apprun"
 	"fmt"
 	"log"
 	"net"
@@ -26,19 +27,19 @@ import (
 	"fdt/internal/store"
 )
 
-func runIntranet(env map[string]string) error {
+func RunIntranet(env map[string]string) error {
 	// Portal UI：LISTEN 可配（默认 8080）。ATM 数据口固定 8081，永不挂页面。
-	listen := envOr(env, "LISTEN", "0.0.0.0:8080")
+	listen := apprun.EnvOr(env, "LISTEN", "0.0.0.0:8080")
 	atmListen := "0.0.0.0:8081"
 	if _, p, err := net.SplitHostPort(listen); err == nil && p == "8081" {
 		return fmt.Errorf("intranet: LISTEN 不能使用 8081（已固定为 ATM 数据口 /data /import）")
 	}
-	dataDir := envOr(env, "DATA_DIR", "/var/lib/fdt")
-	keys := envOr(env, "KEYS_DIR", "/etc/fdt/keys")
-	tenant := envOr(env, "TENANT", "default")
-	deviceID := envOr(env, "DEVICE_ID", "atm-01")
-	deviceSecret := envOr(env, "DEVICE_SECRET", "")
-	identityMode := envOr(env, "IDENTITY", "mock")
+	dataDir := apprun.EnvOr(env, "DATA_DIR", "/var/lib/fdt")
+	keys := apprun.EnvOr(env, "KEYS_DIR", "/etc/fdt/keys")
+	tenant := apprun.EnvOr(env, "TENANT", "default")
+	deviceID := apprun.EnvOr(env, "DEVICE_ID", "atm-01")
+	deviceSecret := apprun.EnvOr(env, "DEVICE_SECRET", "")
+	identityMode := apprun.EnvOr(env, "IDENTITY", "mock")
 	clamdAddr := env["CLAMD"]
 
 	dbPath := filepath.Join(dataDir, "fdt.db")
@@ -94,16 +95,16 @@ func runIntranet(env map[string]string) error {
 
 	svc := &portal.Service{
 		Store: st, Signer: signer, DLP: dlp,
-		Opts: manifest.Options{SingleFrameBudget: 1600},
+		Opts:        manifest.Options{SingleFrameBudget: 1600},
 		StagingRoot: staging, QRTTL: 10 * time.Minute, Tenant: tenant,
 		SourceRoot: filepath.Join(dataDir, "uploads"),
 	}
 	_ = os.MkdirAll(svc.SourceRoot, 0o755)
 
 	etcDir := filepath.Dir(keys)
-	ldapFile := envOr(env, "LDAP_CONFIG", filepath.Join(etcDir, "ldap.json"))
-	formFieldsFile := envOr(env, "FORM_FIELDS_FILE", filepath.Join(etcDir, "form-fields.json"))
-	envFile := envOr(env, "ENV_FILE", filepath.Join(etcDir, "fdt.env"))
+	ldapFile := apprun.EnvOr(env, "LDAP_CONFIG", filepath.Join(etcDir, "ldap.json"))
+	formFieldsFile := apprun.EnvOr(env, "FORM_FIELDS_FILE", filepath.Join(etcDir, "form-fields.json"))
+	envFile := apprun.EnvOr(env, "ENV_FILE", filepath.Join(etcDir, "fdt.env"))
 	idp, resolvedMode, err := portal.BuildIdentityProvider(identityMode, ldapFile, env)
 	if err != nil {
 		log.Printf("identity 配置警告: %v；回退 mock", err)
@@ -120,7 +121,7 @@ func runIntranet(env map[string]string) error {
 		Sessions: portal.NewSessions(),
 		Bindings: &portal.FeishuBindings{Path: filepath.Join(dataDir, "feishu_bindings.json")},
 		LDAPFile: ldapFile, FormFieldsFile: formFieldsFile, EnvFile: envFile,
-		AdminUser:    envOr(env, "PORTAL_ADMIN_USER", "admin"),
+		AdminUser:    apprun.EnvOr(env, "PORTAL_ADMIN_USER", "admin"),
 		AdminPass:    env["PORTAL_ADMIN_PASSWORD"],
 		AdminUsers:   parseAdminUsers(env["PORTAL_ADMIN_USERS"]),
 		IdentityMode: resolvedMode,

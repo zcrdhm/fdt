@@ -10,22 +10,25 @@ import (
 	"os"
 )
 
-const usage = `FDT — 离线数据摆渡（单二进制）
+const usage = `FDT — 离线数据摆渡
 
-一键部署（推荐）：
-  sudo ./fdt install intranet [--tenant acme]   # 内网：密钥 + 服务 + U 盘密钥包
+推荐按角色用瘦包（make release）：
+  fdt-gw          DMZ 网关
+  fdt-intranet    内网 Portal
+  fdt-atm         ATM 终端
+本命令为全能包（含 install / 三角色），也可单独使用。
+
+一键部署：
+  sudo ./fdt install intranet [--tenant acme]   # 同目录有 fdt-intranet 则优先装瘦包
   sudo ./fdt install gateway --bundle gateway.tgz --domain gw.example.com --email ops@x.com
-  sudo ./fdt install gateway --tenants tenants.json [--mock]        # 预置多租户
-  sudo ./fdt install atm --bundle atm-01.tgz --server http://10.0.0.5:8080
-  # /admin：绑定域名 → Let's Encrypt → 租户注册链接；客户 /console 上传 PEM、绑飞书
+  sudo ./fdt install gateway --tenants tenants.json [--mock]
+  sudo ./fdt install atm --bundle atm-01.tgz --server http://10.0.0.5:8081
 
 日常：
-  sudo systemctl status fdt                # 内网/网关守护进程
-  fdt run                                  # 前台按 /etc/fdt/fdt.env 启动
-  fdt demo                                 # 离线端到端演示
-
-高级（兼容旧命令）：
-  fdt portal|gateway|atm|keygen [flags…]
+  sudo systemctl status fdt
+  fdt run                  # 按 /etc/fdt/fdt.env 的 ROLE 启动
+  fdt atm -ui              # ATM 触屏
+  fdt demo
 `
 
 func main() {

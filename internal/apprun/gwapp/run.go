@@ -1,8 +1,9 @@
-package main
+package gwapp
 
 import (
 	"context"
 	"crypto/tls"
+	"fdt/internal/apprun"
 	"fmt"
 	"log"
 	"net/http"
@@ -22,10 +23,10 @@ import (
 	"fdt/internal/hsm"
 )
 
-func runGateway(env map[string]string) error {
-	listen := envOr(env, "LISTEN", "0.0.0.0:8090")
-	keys := envOr(env, "KEYS_DIR", "/etc/fdt/keys")
-	dataDir := envOr(env, "DATA_DIR", "/var/lib/fdt")
+func RunGateway(env map[string]string) error {
+	listen := apprun.EnvOr(env, "LISTEN", "0.0.0.0:8090")
+	keys := apprun.EnvOr(env, "KEYS_DIR", "/etc/fdt/keys")
+	dataDir := apprun.EnvOr(env, "DATA_DIR", "/var/lib/fdt")
 	etcDir := filepath.Dir(keys)
 	mock := env["MOCK_FEISHU"] == "1" || env["MOCK_FEISHU"] == "true"
 	useTLS := env["TLS"] == "1" || env["TLS"] == "true"
@@ -35,10 +36,10 @@ func runGateway(env map[string]string) error {
 		tenantsDir = filepath.Join(etcDir, "tenants")
 	}
 	adminPass := env["ADMIN_PASSWORD"]
-	adminUser := envOr(env, "ADMIN_USER", "admin")
+	adminUser := apprun.EnvOr(env, "ADMIN_USER", "admin")
 	enableAdmin := adminPass != ""
-	acmeFile := envOr(env, "ACME_CONFIG", filepath.Join(etcDir, "acme.json"))
-	domainFile := envOr(env, "DOMAIN_CONFIG", filepath.Join(etcDir, "domain.json"))
+	acmeFile := apprun.EnvOr(env, "ACME_CONFIG", filepath.Join(etcDir, "acme.json"))
+	domainFile := apprun.EnvOr(env, "DOMAIN_CONFIG", filepath.Join(etcDir, "domain.json"))
 
 	svc, jsapi, err := buildGatewayService(env, keys, tenantsFile, mock)
 	if err != nil {
@@ -118,7 +119,7 @@ func runGateway(env map[string]string) error {
 		saveDomain := func(c gwdomain.Config) error {
 			return gwdomain.SaveFile(domainFile, c)
 		}
-		envFile := envOr(env, "ENV_FILE", filepath.Join(etcDir, "fdt.env"))
+		envFile := apprun.EnvOr(env, "ENV_FILE", filepath.Join(etcDir, "fdt.env"))
 		admin := &gwadmin.Handler{
 			Store: adminStore, Auth: auth, Tenants: gwadmin.NewTenantSessions(),
 			ACME: acmeMgr, ACMEFile: acmeFile, DomainFile: domainFile, EnvFile: envFile,
@@ -154,8 +155,8 @@ func runGateway(env map[string]string) error {
 		log.Printf("Let's Encrypt ACME 已启用 domain=%s email=%s cache=%s http-01=%s",
 			acmeCfg.Domain, acmeCfg.Email, acmeCfg.Cache, acmeCfg.HTTPAddr)
 	} else if useTLS {
-		certFile := envOr(env, "TLS_CERT", filepath.Join(etcDir, "tls", "fullchain.pem"))
-		keyFile := envOr(env, "TLS_KEY", filepath.Join(etcDir, "tls", "privkey.pem"))
+		certFile := apprun.EnvOr(env, "TLS_CERT", filepath.Join(etcDir, "tls", "fullchain.pem"))
+		keyFile := apprun.EnvOr(env, "TLS_KEY", filepath.Join(etcDir, "tls", "privkey.pem"))
 		cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 		if err != nil {
 			return fmt.Errorf("TLS=1 但证书不可用（%s / %s）: %w；或改用 ACME=1 + ACME_DOMAIN", certFile, keyFile, err)
@@ -235,7 +236,7 @@ func buildGatewayService(env map[string]string, keys, tenantsFile string, mock b
 					live := feishu.NewLiveClient(feishu.LiveConfig{
 						AppID: appID, AppSecret: secret, ApprovalCode: code,
 						ApprovalCodeImport: codeImport,
-						EncryptKey: env["FEISHU_ENCRYPT_KEY"], VerificationToken: env["FEISHU_VERIFY_TOKEN"],
+						EncryptKey:         env["FEISHU_ENCRYPT_KEY"], VerificationToken: env["FEISHU_VERIFY_TOKEN"],
 					}, nil)
 					client = live
 					jsapi = live

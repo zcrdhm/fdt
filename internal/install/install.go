@@ -16,26 +16,27 @@ import (
 	"strings"
 	"text/template"
 
+	"fdt/internal/apprun"
 	"fdt/internal/crypto"
 	"fdt/internal/portal"
 )
 
 // Options controls a one-shot install.
 type Options struct {
-	Role     string // intranet | gateway | atm
-	Prefix   string // default /opt/fdt (binary) + /etc/fdt + /var/lib/fdt
-	Binary   string // path to the fdt binary being installed (usually os.Executable)
-	DeviceID string // ATM id when Role=intranet or atm
-	Tenant   string
-	Listen   string // intranet unified listen, default 0.0.0.0:8080
-	Gateway  string // ATM: base URL of intranet (e.g. http://10.0.0.5:8080)
-	Bundle   string // path to role bundle .tgz to import (gateway/atm)
-	Tenants  string // gateway: multi-tenant JSON (installs under /etc/fdt/tenants.json)
-	Domain   string // gateway: public DNS name for Let's Encrypt
-	Email    string // gateway: ACME account email
-	Mock     bool   // gateway: enable mock Feishu
+	Role      string // intranet | gateway | atm
+	Prefix    string // default /opt/fdt (binary) + /etc/fdt + /var/lib/fdt
+	Binary    string // path to the fdt binary being installed (usually os.Executable)
+	DeviceID  string // ATM id when Role=intranet or atm
+	Tenant    string
+	Listen    string // intranet unified listen, default 0.0.0.0:8080
+	Gateway   string // ATM: base URL of intranet (e.g. http://10.0.0.5:8080)
+	Bundle    string // path to role bundle .tgz to import (gateway/atm)
+	Tenants   string // gateway: multi-tenant JSON (installs under /etc/fdt/tenants.json)
+	Domain    string // gateway: public DNS name for Let's Encrypt
+	Email     string // gateway: ACME account email
+	Mock      bool   // gateway: enable mock Feishu
 	NoSystemd bool
-	Force    bool // overwrite existing keys
+	Force     bool // overwrite existing keys
 }
 
 type Layout struct {
@@ -84,6 +85,10 @@ func Run(opt Options) error {
 		opt.Listen = "0.0.0.0:8080"
 	}
 	lay := layout(opt.Prefix)
+	opt.Binary = PreferBinary(opt.Binary, opt.Role)
+	if opt.Binary != "" {
+		fmt.Printf("安装二进制: %s → %s\n", opt.Binary, lay.Bin)
+	}
 
 	switch opt.Role {
 	case "intranet", "portal":
@@ -130,8 +135,8 @@ func installIntranet(opt Options, lay Layout) error {
 		"DATA_DIR": lay.Var, "KEYS_DIR": lay.Keys,
 		"DEVICE_ID": opt.DeviceID, "DEVICE_SECRET": secret,
 		"IDENTITY": "mock", "CLAMD": "", "TLS": "0",
-		"LDAP_CONFIG": filepath.Join(lay.Etc, "ldap.json"),
-		"ENV_FILE":    lay.EnvFile,
+		"LDAP_CONFIG":           filepath.Join(lay.Etc, "ldap.json"),
+		"ENV_FILE":              lay.EnvFile,
 		"PORTAL_ADMIN_USER":     "admin",
 		"PORTAL_ADMIN_PASSWORD": portalAdminPass,
 		"PORTAL_ADMIN_USERS":    "", // optional: directory accounts with admin access on main portal
@@ -215,20 +220,20 @@ func installGateway(opt Options, lay Layout) error {
 	acmeCache := filepath.Join(lay.Var, "acme")
 	_ = os.MkdirAll(acmeCache, 0o700)
 	env := envMap{
-		"ROLE": "gateway",
+		"ROLE":     "gateway",
 		"DATA_DIR": lay.Var, "KEYS_DIR": lay.Keys,
-		"MOCK_FEISHU": boolStr(opt.Mock && !multi),
+		"MOCK_FEISHU":   boolStr(opt.Mock && !multi),
 		"FEISHU_APP_ID": "", "FEISHU_APP_SECRET": "", "FEISHU_APPROVAL_CODE": "",
 		"FEISHU_ENCRYPT_KEY": "", "FEISHU_VERIFY_TOKEN": "",
-		"TLS_CERT": filepath.Join(tlsDir, "fullchain.pem"),
-		"TLS_KEY":  filepath.Join(tlsDir, "privkey.pem"),
-		"TENANTS_FILE": tenantsCfg,
-		"TENANTS_DIR":  tenantsDir,
-		"ADMIN_USER":   "admin",
+		"TLS_CERT":       filepath.Join(tlsDir, "fullchain.pem"),
+		"TLS_KEY":        filepath.Join(tlsDir, "privkey.pem"),
+		"TENANTS_FILE":   tenantsCfg,
+		"TENANTS_DIR":    tenantsDir,
+		"ADMIN_USER":     "admin",
 		"ADMIN_PASSWORD": adminPass,
-		"ACME": "0", "ACME_DOMAIN": opt.Domain, "ACME_EMAIL": opt.Email,
+		"ACME":           "0", "ACME_DOMAIN": opt.Domain, "ACME_EMAIL": opt.Email,
 		"ACME_CACHE": acmeCache, "ACME_HTTP": "0.0.0.0:80",
-		"ACME_CONFIG": filepath.Join(lay.Etc, "acme.json"),
+		"ACME_CONFIG":   filepath.Join(lay.Etc, "acme.json"),
 		"DOMAIN_CONFIG": filepath.Join(lay.Etc, "domain.json"),
 	}
 	if multi {
@@ -410,7 +415,7 @@ exec "$CHROME" --kiosk --app="$UI" --user-data-dir="$PROFILE" \
 	fmt.Println("  网页界面:  " + uiHelper + "   →  http://127.0.0.1:9080/（可改 ATM_UI_LISTEN / ATM_UI_TLS）")
 	fmt.Println("  触屏锁屏:  " + kioskHelper + "   （Chromium --kiosk；ATM_UI_URL 与 UI 协议端口一致）")
 	fmt.Println("  Portal 数据: DATA_URL/IMPORT_URL → 内网 :8081（与 ATM UI 端口无关）")
-	fmt.Println("  维护密码:  fdt-maint（可在 UI 维护模式改密，或改 fdt.env 中 ATM_MAINT_PASSWORD）")
+	fmt.Println("  维护密码:  默认 fdt-maint（首次启动后写入 bcrypt 哈希到 atm_maint_password；请在 UI 改密，并删除 fdt.env 明文 ATM_MAINT_PASSWORD）")
 	fmt.Println("  导出兑付:  " + helper + " -qr2 'FDT1....'")
 	fmt.Println("  摄像头扫:  " + helper + " -camera /dev/video0")
 	fmt.Println("  导入发起:  " + helper + " -mode import -import-phase start -reason '...'")
@@ -790,6 +795,42 @@ WantedBy=multi-user.target
 	return t.Execute(f, map[string]string{"Role": role, "Env": lay.EnvFile, "Bin": lay.Bin})
 }
 
+// PreferBinary picks a role-slim binary next to the installer when present.
+// Order: explicit opt → sibling fdt-gw|fdt-intranet|fdt-atm → current executable.
+func PreferBinary(explicit, role string) string {
+	if explicit != "" {
+		return explicit
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	dir := filepath.Dir(exe)
+	var names []string
+	switch strings.ToLower(role) {
+	case "gateway", "dmz":
+		names = []string{"fdt-gw", "fdt"}
+	case "intranet", "portal":
+		names = []string{"fdt-intranet", "fdt"}
+	case "atm":
+		names = []string{"fdt-atm", "fdt"}
+	default:
+		names = []string{"fdt"}
+	}
+	for _, n := range names {
+		p := filepath.Join(dir, n)
+		if st, err := os.Stat(p); err == nil && !st.IsDir() {
+			return p
+		}
+		// Windows release layout
+		p = filepath.Join(dir, n+".exe")
+		if st, err := os.Stat(p); err == nil && !st.IsDir() {
+			return p
+		}
+	}
+	return exe
+}
+
 func copyBinary(src, dst string) error {
 	if src == "" {
 		var err error
@@ -851,21 +892,5 @@ func SetEnvValue(path, key, value string) error {
 
 // LoadEnv reads KEY=VAL lines into a map.
 func LoadEnv(path string) (map[string]string, error) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	out := map[string]string{}
-	for _, line := range strings.Split(string(b), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		k, v, ok := strings.Cut(line, "=")
-		if !ok {
-			continue
-		}
-		out[strings.TrimSpace(k)] = strings.TrimSpace(v)
-	}
-	return out, nil
+	return apprun.LoadEnv(path)
 }

@@ -9,7 +9,7 @@
 |---|---|---|
 | 二进制 / 网页 UI（`:9080`） | ✅ | ✅ |
 | 导出兑付 / 导入 | ✅ | ✅ |
-| U 盘 | ✅ `USB=mock` + 盘符路径（如 `E:\`） | ✅ `USB=sysfs` 自动挂载 |
+| U 盘 | ✅ `USB=windows` 自动识别可移动/USB 盘符 | ✅ `USB=sysfs` 自动挂载 |
 | 扫码预览（浏览器摄像头） | ✅ 点「扫码」弹预览窗 | ✅ |
 | 本机服务端摄像头（`CAMERA=`） | ❌ 未实现 | ✅ `/dev/video0` + ffmpeg |
 | 串口扫码枪 | ❌ 未实现 | ✅ |
@@ -91,9 +91,9 @@ DEVICE_SECRET=与内网签发一致
 DATA_URL=http://10.0.0.5:8081/data
 IMPORT_URL=http://10.0.0.5:8081/import
 
-# Windows：用 mock + 盘符，不要用 sysfs
-USB=mock
-USB_DIR=E:\
+# Windows：认真盘（可移动盘 + USB 接口的固定盘）；不要用 Linux 的 sysfs
+USB=windows
+# 仅联调假盘时才用：USB=mock + USB_DIR=E:\
 
 ATM_UI_LISTEN=127.0.0.1:9080
 ATM_UI_TLS=0
@@ -106,6 +106,7 @@ ATM_UI_TLS_KEY=
 #   ATM_UI_TLS_CERT=C:\fdt-atm\etc\keys\server.pem
 #   ATM_UI_TLS_KEY=C:\fdt-atm\etc\keys\server.key
 #   ATM_UI_URL=https://127.0.0.1
+# 首次引导明文；启动后哈希写入 ATM_MAINT_PASSWORD_FILE，请删掉本行明文
 ATM_MAINT_PASSWORD=fdt-maint
 ATM_MAINT_PASSWORD_FILE=C:\fdt-atm\var\atm_maint_password
 ATM_IMPORT_FIELDS=C:\fdt-atm\etc\import-fields.json
@@ -119,7 +120,7 @@ SCANNER=
 
 说明：
 
-- **`USB=mock` + `USB_DIR=E:\`**：把已插入并分配盘符的 U 盘当作工作目录（需可写）。换盘时改盘符或插到同一盘符。  
+- **`USB=windows`**：自动枚举 D:–Z: 中可移动盘，以及总线类型为 USB 的盘；插上即识别，无需写盘符。联调假盘才用 `USB=mock` + `USB_DIR=`。  
 - **`DATA_URL` / `IMPORT_URL`**：必须指向内网 **`:8081`** 的 `/data`、`/import`（不是 Portal 网页端口，也不是 ATM UI 端口）。  
 - **`ATM_UI_LISTEN` / `ATM_UI_TLS`**：仅控制本机触屏网页；可改为 80/443 + 证书。  
 - **`DEVICE_SECRET`**：与内网设备鉴权一致；不对则拉数/导入会 401。  
@@ -128,7 +129,28 @@ SCANNER=
 
 ## 5. 启动
 
-### 5.1 网页 / 触屏 UI（推荐）
+### 5.1 独立 GUI（推荐，无需管理员）
+
+仓库独立目录 `atm-gui/` → **`fdt-atm-gui.exe`**：
+
+- **普通用户**双击即可（不写 `C:\Program Files` / 不需 Administrator）
+- **首次启动**弹出配置向导（Portal `:8081`、设备密钥、`pk_gateway.pem`、维护密码）
+- 配置写入 `%AppData%\FDT-ATM\fdt.env`（可用 `FDT_ATM_HOME` 覆盖）
+- 以后启动直接进 ATM；`-setup` 可重新配置
+- 维护密码在界面「维护模式」修改（文件内为 bcrypt）
+
+```bat
+:: 构建机
+make windows-atm-gui
+:: 把 dist\windows-amd64\fdt-atm-gui.exe 拷到任意用户可写目录后双击
+
+fdt-atm-gui.exe
+fdt-atm-gui.exe -setup
+```
+
+需 Edge WebView2 Runtime（Win10/11 一般自带）。
+
+### 5.2 网页 / 触屏 UI（浏览器）
 
 ```bat
 cd /d C:\fdt-atm
@@ -141,13 +163,13 @@ bin\fdt.exe atm -env etc\fdt.env -ui
 - 导出：扫 QR#2 或粘贴令牌 → 兑付写盘  
 - 导入：选 U 盘文件 → 生成 QR#1 → 审批后扫 QR#2 完成  
 
-### 5.2 命令行兑付（无 UI）
+### 5.3 命令行兑付（无 UI）
 
 ```bat
 bin\fdt.exe atm -env etc\fdt.env -qr2 "FDT1...."
 ```
 
-### 5.3 可选：Chrome 伪 kiosk
+### 5.4 可选：Chrome 伪 kiosk
 
 Windows 无 `fdt-atm-kiosk` 脚本，可自行：
 
@@ -160,7 +182,9 @@ start "" "C:\Program Files\Google\Chrome\Application\chrome.exe" ^
 
 先保证 `-ui` 进程已在跑。
 
-### 5.4 开机自启（可选）
+### 5.5 开机自启（可选）
+
+推荐直接启动 `bin\fdt-atm-gui.exe`（自带服务+窗口）。旧方式：
 
 任选其一：
 

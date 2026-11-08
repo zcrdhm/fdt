@@ -1,4 +1,4 @@
-//go:build !linux
+//go:build !linux && !windows
 
 package atm
 
@@ -13,4 +13,13 @@ type SysfsUSB struct {
 
 func (SysfsUSB) Detect() (Device, error) {
 	return nil, errors.New("atm: udev USB detection is only supported on linux")
+}
+
+// WindowsUSB is only implemented on Windows.
+type WindowsUSB struct {
+	SkipLetters string
+}
+
+func (WindowsUSB) Detect() (Device, error) {
+	return nil, errors.New("atm: Windows USB detection is only supported on windows")
 }
