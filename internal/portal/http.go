@@ -18,6 +18,7 @@ import (
 
 	qrcode "github.com/skip2/go-qrcode"
 
+	"fdt/internal/buildinfo"
 	"fdt/internal/identity"
 	"fdt/internal/model"
 	"fdt/internal/store"
@@ -43,6 +44,7 @@ type Handler struct {
 	AdminPass      string // PORTAL_ADMIN_PASSWORD; local admin page login
 	AdminUsers     map[string]bool // PORTAL_ADMIN_USERS directory accounts (optional auto admin)
 	IdentityMode   string
+	PAMService     string // PAM_SERVICE; default password-auth
 	ReleasedRoot   string // import release dir (DATA_DIR/released); download endpoint roots here
 	mu             sync.Mutex
 
@@ -352,6 +354,8 @@ func (h *Handler) meAPI(w http.ResponseWriter, r *http.Request) {
 			"authRequired":    h.provider() != nil,
 			"adminConfigured": h.adminPass() != "" || len(h.AdminUsers) > 0,
 			"adminUser":       h.adminUserName(),
+			"version":         buildinfo.Version,
+			"copyright":       buildinfo.Copyright,
 		})
 		return
 	}
@@ -431,6 +435,8 @@ func (h *Handler) mePayloadWithReq(u *identity.User, r *http.Request) map[string
 		"isLocalAdmin":      localAdmin,
 		"adminConfigured":   h.adminPass() != "" || len(h.AdminUsers) > 0,
 		"adminUser":         h.adminUserName(),
+		"version":           buildinfo.Version,
+		"copyright":         buildinfo.Copyright,
 	}
 }
 
@@ -509,8 +515,16 @@ func (h *Handler) getLDAP(w http.ResponseWriter, r *http.Request) {
 	if cfg.URL == "" && h.EnvFile != "" {
 		// soft merge display from env if file empty — skip, UI starts blank
 	}
+	pamService := strings.TrimSpace(h.PAMService)
+	if pamService == "" {
+		pamService = identity.DefaultPAMService
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ldap": cfg.Public(), "identityMode": h.IdentityMode, "ldapFile": h.LDAPFile,
+		"pam": map[string]any{
+			"service":   pamService,
+			"available": identity.PAMAvailable(),
+		},
 	})
 }
 
@@ -518,7 +532,11 @@ func (h *Handler) saveLDAP(w http.ResponseWriter, r *http.Request) {
 	if !h.requireSettings(w, r) {
 		return
 	}
-	var body LDAPFile
+	var body struct {
+		LDAPFile
+		IdentityMode string `json:"identityMode"`
+		PAMService   string `json:"pamService"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "bad json", http.StatusBadRequest)
 		return
@@ -527,32 +545,67 @@ func (h *Handler) saveLDAP(w http.ResponseWriter, r *http.Request) {
 	if body.ServicePassword == "" {
 		body.ServicePassword = prev.ServicePassword
 	}
+	mode := strings.ToLower(strings.TrimSpace(body.IdentityMode))
+	switch mode {
+	case "ldap", "none", "mock", "pam":
+	default:
+		// 兼容旧客户端：仅传 enabled 时，关闭 LDAP 默认 none（禁止悄悄回退 mock）
+		if body.Enabled {
+			mode = "ldap"
+		} else {
+			mode = "none"
+		}
+	}
+	body.Enabled = mode == "ldap"
+	pamService := strings.TrimSpace(body.PAMService)
+	if pamService == "" {
+		pamService = identity.DefaultPAMService
+	}
 	if h.LDAPFile == "" {
 		h.LDAPFile = "/etc/fdt/ldap.json"
 	}
-	if err := SaveLDAPFile(h.LDAPFile, body); err != nil {
+	if err := SaveLDAPFile(h.LDAPFile, body.LDAPFile); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	mode := "mock"
-	if body.Enabled {
-		mode = "ldap"
+	switch mode {
+	case "ldap":
 		p, err := identity.NewLDAPProvider(body.ToIdentity())
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		h.setProvider(p, "ldap")
-	} else {
+	case "pam":
+		p, err := identity.NewPAMProvider(identity.PAMConfig{Service: pamService})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		h.PAMService = pamService
+		h.setProvider(p, "pam")
+	case "none":
+		h.setProvider(nil, "none")
+	default: // mock — 仅联调
 		h.setProvider(identity.NewMockProvider(), "mock")
-		mode = "mock"
 	}
 	if h.EnvFile != "" {
 		_ = setEnvValue(h.EnvFile, "IDENTITY", mode)
+		if mode == "pam" {
+			_ = setEnvValue(h.EnvFile, "PAM_SERVICE", pamService)
+		}
+	}
+	msg := "已保存。身份源已热切换为 " + mode + "；建议确认登录后再重启 Portal。"
+	switch mode {
+	case "mock":
+		msg = "已保存为 mock（含弱口令样例账号，禁止生产）。请尽快改回 ldap / pam / none。"
+	case "pam":
+		msg = "已保存为本机 PAM（服务 " + pamService + "）。请用系统账号测试登录。"
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true, "identityMode": mode, "ldap": body.Public(),
-		"message": "已保存。LDAP 已热切换；建议确认登录后再 systemctl restart fdt。",
+		"pam": map[string]any{"service": pamService, "available": identity.PAMAvailable()},
+		"message": msg,
 	})
 }
 
@@ -562,11 +615,53 @@ func (h *Handler) testLDAP(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		LDAPFile
-		Account  string `json:"account"`
-		Password string `json:"password"`
+		IdentityMode string `json:"identityMode"`
+		PAMService   string `json:"pamService"`
+		Account      string `json:"account"`
+		Password     string `json:"password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+	mode := strings.ToLower(strings.TrimSpace(body.IdentityMode))
+	if mode == "" {
+		if body.Enabled {
+			mode = "ldap"
+		} else {
+			mode = h.IdentityMode
+		}
+	}
+	if mode == "pam" {
+		svc := strings.TrimSpace(body.PAMService)
+		if svc == "" {
+			svc = h.PAMService
+		}
+		p, err := identity.NewPAMProvider(identity.PAMConfig{Service: svc})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if body.Account == "" {
+			if strings.TrimSpace(svc) == "" {
+				svc = identity.DefaultPAMService
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"ok": true, "message": "PAM 可用（服务 " + svc + "；未做用户登录测试）",
+			})
+			return
+		}
+		u, err := p.Authenticate(r.Context(), body.Account, body.Password)
+		if err != nil {
+			http.Error(w, "测试失败: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok": true, "message": "PAM 登录成功",
+			"user": map[string]string{
+				"account": u.Account, "id": u.ID, "name": u.Name, "dept": u.Dept, "mail": u.Mail,
+			},
+		})
 		return
 	}
 	prev, _ := LoadLDAPFile(h.LDAPFile)

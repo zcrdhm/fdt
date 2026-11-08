@@ -582,8 +582,16 @@ func (h *Handler) consoleDownloadPub(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	w.Header().Set("Content-Type", "application/x-pem-file")
-	w.Header().Set("Content-Disposition", "attachment; filename=pk_gateway.pem")
+	// ?view=1 or Accept: text/plain → inline PEM for console「查看密钥内容」
+	view := r.URL.Query().Get("view") == "1" ||
+		strings.Contains(r.Header.Get("Accept"), "text/plain")
+	if view {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+	} else {
+		w.Header().Set("Content-Type", "application/x-pem-file")
+		w.Header().Set("Content-Disposition", "attachment; filename=pk_gateway.pem")
+	}
 	_, _ = w.Write(pem)
 }
 

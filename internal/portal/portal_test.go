@@ -75,7 +75,7 @@ func TestHandlerRequiresAuthWhenIdentitySet(t *testing.T) {
 
 	// /me with creds -> identity
 	req, _ := http.NewRequest("GET", srv.URL+"/me", nil)
-	req.SetBasicAuth("zhangsan", "pass123")
+	req.SetBasicAuth("zhangsan", "S3!config")
 	resp, err = http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -166,7 +166,7 @@ func TestAdminLoginSeesAllHistory(t *testing.T) {
 	body, _ := json.Marshal(map[string]any{"reason": "r", "cls": "internal", "sourceDir": src})
 	req, _ := http.NewRequest("POST", srv.URL+"/requests", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.SetBasicAuth("zhangsan", "pass123")
+	req.SetBasicAuth("zhangsan", "S3!config")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -248,7 +248,7 @@ func TestCreateRequestUsesAuthenticatedIdentity(t *testing.T) {
 	})
 	req, _ := http.NewRequest("POST", srv.URL+"/requests", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.SetBasicAuth("zhangsan", "pass123")
+	req.SetBasicAuth("zhangsan", "S3!config")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -288,7 +288,7 @@ func TestCreateRequestRequiresFeishuBinding(t *testing.T) {
 	body, _ := json.Marshal(map[string]any{"reason": "r", "cls": "internal", "sourceDir": src})
 	req, _ := http.NewRequest("POST", srv.URL+"/requests", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.SetBasicAuth("zhangsan", "pass123")
+	req.SetBasicAuth("zhangsan", "S3!config")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -307,7 +307,7 @@ func TestCreateRequestRequiresFeishuBinding(t *testing.T) {
 	}
 	req2, _ := http.NewRequest("POST", srv.URL+"/requests", bytes.NewReader(body))
 	req2.Header.Set("Content-Type", "application/json")
-	req2.SetBasicAuth("zhangsan", "pass123")
+	req2.SetBasicAuth("zhangsan", "S3!config")
 	resp2, err := http.DefaultClient.Do(req2)
 	if err != nil {
 		t.Fatal(err)

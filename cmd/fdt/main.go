@@ -8,6 +8,8 @@ package main
 import (
 	"fmt"
 	"os"
+
+	"fdt/internal/buildinfo"
 )
 
 const usage = `FDT — 离线数据摆渡
@@ -56,7 +58,7 @@ func main() {
 	case "atm":
 		err = cmdATM(args)
 	case "version":
-		fmt.Println("fdt 1.0")
+		fmt.Println(buildinfo.Summary("fdt"))
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n\n%s", cmd, usage)
 		os.Exit(2)

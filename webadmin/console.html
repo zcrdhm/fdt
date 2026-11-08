@@ -86,10 +86,21 @@
 
       <div class="card">
         <h2 style="margin-top:0;font-size:16px">3. PK_网关（给 ATM）</h2>
-        <p class="sub">下载后放入 ATM 信任链。轮换密钥后须重新下载并更新所有 ATM。</p>
+        <p class="sub">下载或复制 PEM 全文到 ATM 信任链（ATM GUI 首次配置可直接粘贴）。轮换密钥后须更新所有 ATM。</p>
         <div class="row">
           <button type="button" id="btn-dl">下载 pk_gateway.pem</button>
+          <button type="button" class="ghost" id="btn-view-pk">查看密钥内容</button>
           <button type="button" class="ghost" id="btn-regen">重新生成网关密钥对</button>
+        </div>
+        <div id="pk-view" class="hidden" style="margin-top:12px">
+          <label>pk_gateway.pem（可全选复制）</label>
+          <textarea id="pk-pem" rows="8" readonly spellcheck="false" style="font-family:ui-monospace,monospace;font-size:12px"></textarea>
+          <div class="row" style="margin-top:8px">
+            <button type="button" id="btn-copy-pk">复制到剪贴板</button>
+            <button type="button" class="ghost" id="btn-hide-pk">收起</button>
+          </div>
+          <p class="ok" id="pk-copy-ok"></p>
+          <p class="err" id="pk-view-err"></p>
         </div>
         <p class="sub" id="cb" style="margin-top:12px"></p>
       </div>

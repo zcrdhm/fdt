@@ -39,12 +39,24 @@ func DefaultImportFields() ImportFieldsFile {
 	return ImportFieldsFile{
 		Version: 1,
 		Fields: []ImportField{
-			{Key: "reason", Label: "事由", Type: "text", Required: true, Builtin: true,
+			{Key: "reason", Label: "事由", Type: "textarea", Required: true, Builtin: true,
 				Default: "导入资料", Order: 10, Enabled: true},
 			{Key: "cls", Label: "密级", Type: "select", Required: true, Builtin: true,
 				Options: []string{"internal", "confidential", "secret"},
 				Default: "confidential", Order: 20, Enabled: true},
 		},
+	}
+}
+
+// promoteReasonTextarea upgrades legacy reason type=text → textarea (multi-line).
+func promoteReasonTextarea(f *ImportFieldsFile) {
+	if f == nil {
+		return
+	}
+	for i := range f.Fields {
+		if f.Fields[i].Key == "reason" && f.Fields[i].Type == "text" {
+			f.Fields[i].Type = "textarea"
+		}
 	}
 }
 
@@ -70,6 +82,7 @@ func LoadImportFields(path string) (ImportFieldsFile, error) {
 	if f.Version == 0 {
 		f.Version = 1
 	}
+	promoteReasonTextarea(&f)
 	if err := ValidateImportFields(f); err != nil {
 		return ImportFieldsFile{}, err
 	}
@@ -187,6 +200,38 @@ func splitOption(o string) (value, label string) {
 	return o, o
 }
 
+// SaveImportFields validates and writes the ATM import form config.
+func SaveImportFields(path string, f ImportFieldsFile) error {
+	if path == "" {
+		return fmt.Errorf("未配置 ATM_IMPORT_FIELDS，无法保存")
+	}
+	promoteReasonTextarea(&f)
+	if f.Version == 0 {
+		f.Version = 1
+	}
+	if err := ValidateImportFields(f); err != nil {
+		return err
+	}
+	// Ensure builtin flags for core keys.
+	for i := range f.Fields {
+		if f.Fields[i].Key == "reason" || f.Fields[i].Key == "cls" {
+			f.Fields[i].Builtin = true
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	b, err := json.MarshalIndent(f, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, append(b, '\n'), 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
 // WriteDefaultImportFields writes defaults if path does not exist.
 func WriteDefaultImportFields(path string) error {
 	if path == "" {
@@ -195,12 +240,5 @@ func WriteDefaultImportFields(path string) error {
 	if _, err := os.Stat(path); err == nil {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	b, err := json.MarshalIndent(DefaultImportFields(), "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, append(b, '\n'), 0o644)
+	return SaveImportFields(path, DefaultImportFields())
 }

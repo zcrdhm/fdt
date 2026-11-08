@@ -62,6 +62,13 @@ body.kiosk .maint-fab:not(.hidden) { display: inline-flex; align-items: center; 
 }
 .brand { font-size: 28px; font-weight: 650; letter-spacing: -0.03em; }
 .sub { color: var(--muted); font-size: 13px; margin-top: 4px; }
+.app-footer {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: .02em;
+  opacity: .9;
+}
 .tabs { display: flex; gap: 8px; }
 .tab, button {
   border: 0; border-radius: 10px; padding: 12px 16px; font: inherit; font-weight: 600;
@@ -223,8 +230,44 @@ input, select, textarea {
   white-space: pre-wrap; word-break: break-word;
   margin-bottom: 18px; min-height: 2.5em;
 }
-.modal-actions { display: flex; justify-content: flex-end; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
 .modal-actions button { min-width: 120px; padding: 14px 20px; font-size: 16px; }
+
+.fields-editor-card {
+  width: min(720px, 96vw);
+  max-height: min(92vh, 900px);
+  overflow: auto;
+}
+.fields-editor-list { display: flex; flex-direction: column; gap: 12px; margin-top: 8px; }
+.field-edit-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px 12px 10px;
+  background: #0f171e;
+}
+.field-edit-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 12px;
+}
+.field-edit-grid .span2 { grid-column: 1 / -1; }
+.field-edit-card label { margin: 0 0 4px; }
+.field-edit-card .row-checks {
+  display: flex; flex-wrap: wrap; gap: 14px; align-items: center;
+  margin-top: 8px; color: var(--muted); font-size: 13px;
+}
+.field-edit-card .row-checks label {
+  display: inline-flex; align-items: center; gap: 6px; margin: 0; color: inherit; font-size: inherit;
+}
+.field-edit-card .row-checks input { width: auto; padding: 0; }
+.field-edit-head {
+  display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 6px;
+}
+.field-edit-head .key { font-family: ui-monospace, monospace; color: var(--fg); font-size: 13px; }
+@media (max-width: 560px) {
+  .field-edit-grid { grid-template-columns: 1fr; }
+  .field-edit-grid .span2 { grid-column: auto; }
+}
 
 /* 导入 QR#1：居中大弹窗 + 尽量大的二维码（须写在 .modal-card 之后，避免被 420px 覆盖） */
 #import-qr-modal.modal-mask {

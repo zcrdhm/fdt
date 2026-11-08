@@ -19,7 +19,7 @@
         <a class="role-btn" href="/admin/">管理员</a>
       </div>
       <h2 style="margin:14px 0 8px;font-size:18px">用户登录</h2>
-      <p class="sub">使用域账号 / mock 账号登录。退出后需重新登录。</p>
+      <p class="sub" id="login-mode-hint">请使用系统配置的身份源账号登录。退出后需重新登录。</p>
       <label>用户名</label>
       <input id="login-user" autocomplete="username" />
       <label>密码</label>
@@ -28,7 +28,8 @@
         <button type="button" id="btn-login">登录</button>
       </div>
       <p class="err" id="login-err"></p>
-      <p class="hint-line">联调 mock：zhangsan / pass123</p>
+      <p class="hint-line hidden" id="login-mock-hint">联调 mock 账号：zhangsan、lisi</p>
+      <p class="app-footer" id="login-footer">FDT 1.0.1 · © fasteda.cn</p>
     </section>
 
     <section id="view-app" class="hidden">
@@ -134,6 +135,7 @@
         </div>
       </section>
 
+      <p class="app-footer" id="app-footer">FDT 1.0.1 · © fasteda.cn</p>
     </section>
   </div>
 

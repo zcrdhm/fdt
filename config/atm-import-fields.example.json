@@ -4,7 +4,7 @@
     {
       "key": "reason",
       "label": "事由",
-      "type": "text",
+      "type": "textarea",
       "required": true,
       "default": "导入资料",
       "order": 10,

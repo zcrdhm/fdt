@@ -81,7 +81,7 @@ go run ./cmd/fdt-keygen -out keys
 go run ./cmd/fdt-portal  -db fdt.db -internal-key keys/sk_internal.pem -staging staging \
     -identity mock -register-device atm-01 -device-secret dev-secret
 go run ./cmd/fdt-gateway -mock -internal-pub keys/pk_internal.pem -gateway-key keys/sk_gateway.pem
-# -identity mock 启用样例 AD 账号（zhangsan/lisi，密码 pass123）；生产用 -identity ldap
+# -identity mock 启用样例账号（zhangsan/lisi）；生产用 -identity ldap 或 pam
 # 浏览器访问 http://127.0.0.1:8080/（Portal 自带前端，同源无跨域），建单并显示 QR#1
 
 # 4. ATM 兑付（把网页应用/网关得到的 QR#2 帧喂给它）

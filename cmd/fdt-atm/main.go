@@ -7,10 +7,15 @@ import (
 	"os"
 
 	"fdt/internal/apprun/atmapp"
+	"fdt/internal/buildinfo"
 )
 
 func main() {
 	args := os.Args[1:]
+	if len(args) > 0 && (args[0] == "version" || args[0] == "-version" || args[0] == "--version") {
+		fmt.Println(buildinfo.Summary("fdt-atm"))
+		return
+	}
 	if len(args) > 0 && args[0] == "atm" {
 		args = args[1:]
 	}

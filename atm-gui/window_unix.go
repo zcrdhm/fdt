@@ -8,15 +8,23 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
+	"time"
 )
 
+var (
+	activeCmdMu sync.Mutex
+	activeCmd   *exec.Cmd
+)
+
+// openWindow opens a normal closable app window (first-run setup wizard).
 func openWindow(title, uiURL string) error {
 	bin, err := findBrowser()
 	if err != nil {
 		return err
 	}
-	profile := filepath.Join(profileDir(), "chromium-profile")
+	profile := filepath.Join(profileDir(), "chromium-setup")
 	_ = os.MkdirAll(profile, 0o755)
 	args := []string{
 		"--app=" + uiURL,
@@ -24,7 +32,7 @@ func openWindow(title, uiURL string) error {
 		"--no-first-run",
 		"--no-default-browser-check",
 		"--disable-features=TranslateUI",
-		"--class=FDT-ATM-GUI",
+		"--class=FDT-ATM-Setup",
 	}
 	cmd := exec.Command(bin, args...)
 	cmd.Stdout = os.Stdout
@@ -33,14 +41,74 @@ func openWindow(title, uiURL string) error {
 		return fmt.Errorf("启动浏览器窗口失败 (%s): %w", bin, err)
 	}
 	_ = title
-	err = cmd.Wait()
+	_ = cmd.Wait()
+	return nil
+}
+
+// openKioskWindow runs Chromium --kiosk and relaunches if closed without maint quit.
+func openKioskWindow(title, uiURL string) error {
+	bin, err := findBrowser()
 	if err != nil {
-		// User closing the window often yields non-zero; treat as normal exit.
-		if ee, ok := err.(*exec.ExitError); ok {
-			_ = ee
-			return nil
-		}
 		return err
+	}
+	_ = title
+	unhook, _ := installKioskKeyboardHook()
+	defer unhook()
+	restore := installDesktopHotkeyShield()
+	defer restore()
+
+	profile := filepath.Join(profileDir(), "chromium-kiosk")
+	_ = os.MkdirAll(profile, 0o755)
+	args := []string{
+		"--kiosk",
+		"--app=" + uiURL,
+		"--user-data-dir=" + profile,
+		"--no-first-run",
+		"--no-default-browser-check",
+		"--noerrdialogs",
+		"--disable-session-crashed-bubble",
+		"--disable-infobars",
+		"--disable-translate",
+		"--disable-features=TranslateUI",
+		"--check-for-update-interval=31536000",
+		"--password-store=basic",
+		"--overscroll-history-navigation=0",
+		"--disable-pinch",
+		"--class=FDT-ATM-GUI",
+	}
+
+	go func() {
+		<-quitSignal()
+		activeCmdMu.Lock()
+		cmd := activeCmd
+		activeCmdMu.Unlock()
+		if cmd != nil && cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+	}()
+
+	for !shouldQuit() {
+		cmd := exec.Command(bin, args...)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Start(); err != nil {
+			return fmt.Errorf("启动 kiosk 窗口失败 (%s): %w", bin, err)
+		}
+		activeCmdMu.Lock()
+		activeCmd = cmd
+		activeCmdMu.Unlock()
+
+		_ = cmd.Wait()
+
+		activeCmdMu.Lock()
+		activeCmd = nil
+		activeCmdMu.Unlock()
+
+		if shouldQuit() {
+			break
+		}
+		fmt.Fprintln(os.Stderr, "ATM 窗口被关闭，正在重新打开…（维护模式「退出程序」+ 密码才能真正退出）")
+		time.Sleep(400 * time.Millisecond)
 	}
 	return nil
 }
@@ -79,7 +147,6 @@ func findBrowser() (string, error) {
 }
 
 func showError(msg string) {
-	// Best-effort desktop notification / zenity; always also printed by fatal().
 	if path, err := exec.LookPath("zenity"); err == nil {
 		_ = exec.Command(path, "--error", "--title=FDT ATM", "--text="+msg).Run()
 		return

@@ -17,7 +17,35 @@
     return data;
   }
 
+  function applyVersionFooter(data) {
+    const ver = (data && data.version) || '1.0.1';
+    const copy = (data && data.copyright) || '© fasteda.cn';
+    const text = 'FDT ' + ver + ' · ' + copy;
+    ['login-footer', 'app-footer'].forEach((id) => {
+      const el = $(id);
+      if (el) el.textContent = text;
+    });
+  }
+
+  function updateLoginHints(mode) {
+    const m = String(mode || '').toLowerCase();
+    const hint = $('login-mode-hint');
+    const mockHint = $('login-mock-hint');
+    if (hint) {
+      if (m === 'ldap') hint.textContent = '使用域账号登录。退出后需重新登录。';
+      else if (m === 'pam') hint.textContent = '使用本机 PAM 账号登录。退出后需重新登录。';
+      else if (m === 'mock') hint.textContent = '使用 mock 账号登录。退出后需重新登录。';
+      else if (m === 'none') hint.textContent = '当前未启用身份认证（IDENTITY=none）。';
+      else hint.textContent = '请使用系统配置的身份源账号登录。退出后需重新登录。';
+    }
+    if (mockHint) {
+      // 仅提示账号名，不显示密码
+      mockHint.classList.toggle('hidden', m !== 'mock');
+    }
+  }
+
   function showLogin() {
+    updateLoginHints(me && me.identityMode);
     $('view-login').classList.remove('hidden');
     $('view-app').classList.add('hidden');
   }
@@ -125,7 +153,7 @@
       : '<span style="color:var(--warn)">尚未绑定飞书 ID · 请到「飞书 ID」页粘贴手机端显示的 ou_… / user_id</span>';
     $('who-sub').innerHTML = fid;
     $('mode-badge').textContent = me.identityMode || 'mock';
-    $('mode-badge').className = 'badge ' + (me.identityMode === 'ldap' ? 'live' : 'warn');
+    $('mode-badge').className = 'badge ' + ((me.identityMode === 'ldap' || me.identityMode === 'pam') ? 'live' : 'warn');
     $('bind-dir-id').value = me.id || '';
     $('bind-feishu').value = me.feishuId || '';
     updateFeishuGate();
@@ -370,6 +398,7 @@
   async function boot() {
     try {
       me = await api('/api/me');
+      applyVersionFooter(me);
       if (me.authRequired && !me.authenticated) showLogin();
       else showApp();
     } catch (e) {

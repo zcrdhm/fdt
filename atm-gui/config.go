@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"strings"
 
 	"fdt/internal/apprun"
+	"fdt/internal/atmui"
 )
 
 // userATMRoot is a per-user data directory (no admin/root required).
@@ -33,13 +35,14 @@ func defaultEnvPath() string {
 
 // ATMConfig is the first-run / persisted ATM GUI settings.
 type ATMConfig struct {
-	PortalBase   string // e.g. http://192.168.0.135:8081
-	DeviceID     string
-	DeviceSecret string
-	GatewayPub   string // PEM text of pk_gateway.pem
-	MaintPass    string // initial only; stored as bcrypt file
-	USB          string // windows|sysfs|mock
-	USBDir       string // for mock
+	PortalBase       string // e.g. http://192.168.0.135:8081
+	DeviceID         string
+	DeviceSecret     string
+	GatewayPub       string // PEM text of pk_gateway.pem
+	MaintPass        string // initial only; stored as bcrypt file
+	USB              string // windows|sysfs|mock
+	USBDir           string // for mock
+	ImportFieldsJSON string // optional import-fields.json body; empty → default
 }
 
 func (c ATMConfig) DataURL() string {
@@ -144,8 +147,8 @@ func saveATMConfig(c ATMConfig) (envPath string, err error) {
 		return "", fmt.Errorf("写入维护密码文件: %w", err)
 	}
 
-	if _, err := os.Stat(importFields); err != nil {
-		_ = os.WriteFile(importFields, []byte(defaultImportFieldsJSON), 0o644)
+	if err := writeImportFieldsFile(importFields, c.ImportFieldsJSON); err != nil {
+		return "", err
 	}
 
 	lines := []string{
@@ -216,14 +219,33 @@ func loadConfigForForm(envPath string) ATMConfig {
 	if b, err := os.ReadFile(filepath.Join(keys, "pk_gateway.pem")); err == nil {
 		c.GatewayPub = string(b)
 	}
+	fieldsPath := apprun.EnvOr(env, "ATM_IMPORT_FIELDS", filepath.Join(filepath.Dir(envPath), "import-fields.json"))
+	if b, err := os.ReadFile(fieldsPath); err == nil && len(b) > 0 {
+		c.ImportFieldsJSON = string(b)
+	}
 	return c
 }
 
-const defaultImportFieldsJSON = `{
-  "version": 1,
-  "fields": [
-    {"key": "reason", "label": "事由", "type": "text", "required": true, "default": "导入资料", "order": 10, "enabled": true, "builtin": true},
-    {"key": "cls", "label": "密级", "type": "select", "required": true, "options": ["internal", "confidential", "secret"], "default": "confidential", "order": 20, "enabled": true, "builtin": true}
-  ]
+func defaultImportFieldsJSON() string {
+	b, err := json.MarshalIndent(atmui.DefaultImportFields(), "", "  ")
+	if err != nil {
+		return `{"version":1,"fields":[{"key":"reason","label":"事由","type":"textarea","required":true,"default":"导入资料","order":10,"enabled":true,"builtin":true},{"key":"cls","label":"密级","type":"select","required":true,"options":["internal","confidential","secret"],"default":"confidential","order":20,"enabled":true,"builtin":true}]}`
+	}
+	return string(b) + "\n"
 }
-`
+
+// writeImportFieldsFile writes user-provided JSON, or the built-in default when empty.
+func writeImportFieldsFile(path, raw string) error {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return atmui.SaveImportFields(path, atmui.DefaultImportFields())
+	}
+	var f atmui.ImportFieldsFile
+	if err := json.Unmarshal([]byte(raw), &f); err != nil {
+		return fmt.Errorf("import-fields.json 不是合法 JSON: %w", err)
+	}
+	if err := atmui.SaveImportFields(path, f); err != nil {
+		return fmt.Errorf("import-fields.json: %w", err)
+	}
+	return nil
+}

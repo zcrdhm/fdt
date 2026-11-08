@@ -31,40 +31,53 @@ func runSetupWizard(force bool) (envPath string, err error) {
 	})
 	mux.HandleFunc("GET /api/setup", func(w http.ResponseWriter, r *http.Request) {
 		c := loadConfigForForm(envPath)
+		fieldsJSON := strings.TrimSpace(c.ImportFieldsJSON)
+		if fieldsJSON == "" {
+			fieldsJSON = strings.TrimSpace(defaultImportFieldsJSON())
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"portalBase":   c.PortalBase,
-			"deviceId":     c.DeviceID,
-			"deviceSecret": c.DeviceSecret,
-			"gatewayPub":   c.GatewayPub,
-			"usb":          c.USB,
-			"usbDir":       c.USBDir,
-			"home":         userATMRoot(),
-			"envPath":      envPath,
+			"portalBase":       c.PortalBase,
+			"deviceId":         c.DeviceID,
+			"deviceSecret":     c.DeviceSecret,
+			"gatewayPub":       c.GatewayPub,
+			"usb":              c.USB,
+			"usbDir":           c.USBDir,
+			"home":             userATMRoot(),
+			"envPath":          envPath,
+			"importFieldsJSON": fieldsJSON,
+			"importFieldsDefault": strings.TrimSpace(defaultImportFieldsJSON()),
 		})
 	})
 	mux.HandleFunc("POST /api/setup", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			PortalBase   string `json:"portalBase"`
-			DeviceID     string `json:"deviceId"`
-			DeviceSecret string `json:"deviceSecret"`
-			GatewayPub   string `json:"gatewayPub"`
-			MaintPass    string `json:"maintPass"`
-			USB          string `json:"usb"`
-			USBDir       string `json:"usbDir"`
+			PortalBase       string `json:"portalBase"`
+			DeviceID         string `json:"deviceId"`
+			DeviceSecret     string `json:"deviceSecret"`
+			GatewayPub       string `json:"gatewayPub"`
+			MaintPass        string `json:"maintPass"`
+			USB              string `json:"usb"`
+			USBDir           string `json:"usbDir"`
+			ImportFieldsJSON string `json:"importFieldsJSON"`
+			UseDefaultFields bool   `json:"useDefaultFields"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "bad json", http.StatusBadRequest)
 			return
 		}
+		fieldsJSON := body.ImportFieldsJSON
+		if body.UseDefaultFields {
+			fieldsJSON = ""
+		}
 		c := ATMConfig{
-			PortalBase:   strings.TrimSpace(body.PortalBase),
-			DeviceID:     strings.TrimSpace(body.DeviceID),
-			DeviceSecret: strings.TrimSpace(body.DeviceSecret),
-			GatewayPub:   body.GatewayPub,
-			MaintPass:    body.MaintPass,
-			USB:          body.USB,
-			USBDir:       body.USBDir,
+			PortalBase:       strings.TrimSpace(body.PortalBase),
+			DeviceID:         strings.TrimSpace(body.DeviceID),
+			DeviceSecret:     strings.TrimSpace(body.DeviceSecret),
+			GatewayPub:       body.GatewayPub,
+			MaintPass:        body.MaintPass,
+			USB:              body.USB,
+			USBDir:           body.USBDir,
+			ImportFieldsJSON: fieldsJSON,
 		}
 		path, err := saveATMConfig(c)
 		if err != nil {

@@ -12,7 +12,7 @@ func TestMockProviderAuthenticate(t *testing.T) {
 	p := NewMockProvider()
 	ctx := context.Background()
 
-	u, err := p.Authenticate(ctx, "zhangsan", "pass123")
+	u, err := p.Authenticate(ctx, "zhangsan", "S3!config")
 	if err != nil {
 		t.Fatalf("valid login failed: %v", err)
 	}

@@ -8,10 +8,15 @@ import (
 
 	"fdt/internal/apprun"
 	"fdt/internal/apprun/inapp"
+	"fdt/internal/buildinfo"
 )
 
 func main() {
 	args := os.Args[1:]
+	if len(args) > 0 && (args[0] == "version" || args[0] == "-version" || args[0] == "--version") {
+		fmt.Println(buildinfo.Summary("fdt-intranet"))
+		return
+	}
 	if len(args) > 0 && args[0] == "run" {
 		args = args[1:]
 	}

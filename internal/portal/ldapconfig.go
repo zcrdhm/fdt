@@ -105,7 +105,7 @@ func (f LDAPFile) Public() map[string]any {
 	}
 }
 
-// BuildIdentityProvider selects mock / none / ldap from mode + optional ldap file.
+// BuildIdentityProvider selects mock / none / ldap / pam from mode + optional ldap file.
 func BuildIdentityProvider(mode string, ldapPath string, env map[string]string) (identity.Provider, string, error) {
 	fileCfg, _ := LoadLDAPFile(ldapPath)
 	envCfg := LDAPFromEnv(env)
@@ -117,12 +117,19 @@ func BuildIdentityProvider(mode string, ldapPath string, env map[string]string) 
 		}
 	}
 	mode = strings.ToLower(strings.TrimSpace(mode))
-	if cfg.Enabled {
+	if cfg.Enabled && mode != "pam" {
 		mode = "ldap"
 	}
 	switch mode {
 	case "none", "":
 		return nil, "none", nil
+	case "pam":
+		svc := strings.TrimSpace(env["PAM_SERVICE"])
+		p, err := identity.NewPAMProvider(identity.PAMConfig{Service: svc})
+		if err != nil {
+			return nil, "pam", err
+		}
+		return p, "pam", nil
 	case "ldap":
 		if cfg.URL == "" || cfg.SearchBase == "" {
 			return nil, "ldap", fmt.Errorf("LDAP 未配置完整（需要 url + searchBase）")

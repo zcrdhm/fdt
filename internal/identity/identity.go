@@ -4,7 +4,7 @@
 // QR#1 is a verified identity rather than a self-typed string (prevents
 // spoofing and enables department/classification-based approval routing).
 //
-// Two implementations: LDAPProvider (real AD) and MockProvider (offline dev).
+// Implementations: LDAPProvider (AD), PAMProvider (本机 PAM), MockProvider (offline).
 package identity
 
 import (
@@ -50,8 +50,8 @@ type MockProvider struct {
 func NewMockProvider() *MockProvider {
 	m := &MockProvider{Users: map[string]User{}, pass: map[string]string{}}
 	// A couple of sample accounts so the dev Portal is usable out of the box.
-	m.Add("zhangsan", "pass123", User{Account: "zhangsan", ID: "g976f94f", Name: "张三", Dept: "设计部", Mail: "zhangsan@corp.local", Title: "工程师"})
-	m.Add("lisi", "pass123", User{Account: "lisi", ID: "m0001", Name: "李四", Dept: "管理部", Mail: "lisi@corp.local", Title: "经理"})
+	m.Add("zhangsan", "S3!config", User{Account: "zhangsan", ID: "g976f94f", Name: "张三", Dept: "设计部", Mail: "zhangsan@corp.local", Title: "工程师"})
+	m.Add("lisi", "S3!config", User{Account: "lisi", ID: "m0001", Name: "李四", Dept: "管理部", Mail: "lisi@corp.local", Title: "经理"})
 	return m
 }
 

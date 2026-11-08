@@ -13,6 +13,7 @@ import (
 	qrcode "github.com/skip2/go-qrcode"
 
 	"fdt/internal/atm"
+	"fdt/internal/buildinfo"
 	"fdt/internal/model"
 )
 
@@ -24,8 +25,11 @@ type Server struct {
 	PublicBase string
 
 	maint *maintAuth
+	// onQuitGUI is set by fdt-atm-gui; nil for plain fdt-atm -ui.
+	onQuitGUI func()
 
-	importFields ImportFieldsFile
+	importFieldsPath string
+	importFields     ImportFieldsFile
 
 	mu         sync.Mutex
 	written    int64
@@ -46,6 +50,8 @@ type Options struct {
 	// PublicBase is the browser origin for kiosk launch, e.g. https://127.0.0.1 or http://127.0.0.1:9080.
 	// Empty → derive from the incoming request (loopback preferred).
 	PublicBase string
+	// OnQuitGUI is invoked after a successful maint-authenticated quit (ATM GUI only).
+	OnQuitGUI func()
 }
 
 // New wires progress reporting onto the kiosk.
@@ -60,11 +66,13 @@ func NewWithOptions(k *atm.Kiosk, opt Options) *Server {
 		fields = DefaultImportFields()
 	}
 	s := &Server{
-		Kiosk:        k,
-		Camera:       opt.Camera,
-		PublicBase:   strings.TrimRight(strings.TrimSpace(opt.PublicBase), "/"),
-		maint:        newMaintAuth(opt.MaintPasswordFile, opt.MaintPassword),
-		importFields: fields,
+		Kiosk:            k,
+		Camera:           opt.Camera,
+		PublicBase:       strings.TrimRight(strings.TrimSpace(opt.PublicBase), "/"),
+		maint:            newMaintAuth(opt.MaintPasswordFile, opt.MaintPassword),
+		onQuitGUI:        opt.OnQuitGUI,
+		importFieldsPath: strings.TrimSpace(opt.ImportFieldsFile),
+		importFields:     fields,
 	}
 	k.Progress = func(p atm.WriteProgress) {
 		s.mu.Lock()
@@ -91,11 +99,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/redeem", s.redeem)
 	mux.HandleFunc("POST /api/scan/camera", s.scanCamera)
 	mux.HandleFunc("GET /api/import/fields", s.importFieldsAPI)
+	mux.HandleFunc("GET /api/maint/import-fields", s.maintGetImportFields)
+	mux.HandleFunc("POST /api/maint/import-fields", s.maintSaveImportFields)
 	mux.HandleFunc("POST /api/import/start", s.importStart)
 	mux.HandleFunc("POST /api/import/complete", s.importComplete)
 	mux.HandleFunc("POST /api/maint/unlock", s.maintUnlock)
 	mux.HandleFunc("POST /api/maint/password", s.maintChangePassword)
 	mux.HandleFunc("POST /api/maint/kiosk", s.maintLaunchKiosk)
+	mux.HandleFunc("POST /api/maint/quit", s.maintQuitGUI)
 	mux.HandleFunc("GET /{$}", s.ui("index.html"))
 	mux.HandleFunc("GET /app.css", s.ui("app.css"))
 	mux.HandleFunc("GET /app.js", s.ui("app.js"))
@@ -210,6 +221,9 @@ func (s *Server) statusPayload() map[string]any {
 		"camera":      s.Camera,
 		"deviceId":    s.Kiosk.ID,
 		"progress":    prog,
+		"guiQuit":     s.onQuitGUI != nil, // ATM GUI: show「退出程序」
+		"version":     buildinfo.Version,
+		"copyright":   buildinfo.Copyright,
 	}
 	if busy && written > 0 && !started.IsZero() {
 		elapsed := time.Since(started).Seconds()
@@ -306,6 +320,49 @@ func (s *Server) importFieldsAPI(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"version": s.importFields.Version,
 		"fields":  s.importFields.UserFields(),
+	})
+}
+
+func (s *Server) maintGetImportFields(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"version": s.importFields.Version,
+		"fields":  s.importFields.Fields,
+		"path":    s.importFieldsPath,
+		"editable": s.importFieldsPath != "",
+	})
+}
+
+func (s *Server) maintSaveImportFields(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Password string        `json:"password"`
+		Version  int           `json:"version"`
+		Fields   []ImportField `json:"fields"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+	if s.maint == nil || !s.maint.check(body.Password) {
+		http.Error(w, "维护密码不正确", http.StatusUnauthorized)
+		return
+	}
+	f := ImportFieldsFile{Version: body.Version, Fields: body.Fields}
+	if f.Version == 0 {
+		f.Version = 1
+	}
+	if err := SaveImportFields(s.importFieldsPath, f); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	loaded, err := LoadImportFields(s.importFieldsPath)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.importFields = loaded
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "message": "导入字段已保存",
+		"version": loaded.Version, "fields": loaded.Fields, "path": s.importFieldsPath,
 	})
 }
 
@@ -420,6 +477,27 @@ func (s *Server) maintUnlock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// maintQuitGUI allows ATM GUI to exit kiosk only with a valid maintenance password.
+func (s *Server) maintQuitGUI(w http.ResponseWriter, r *http.Request) {
+	if s.onQuitGUI == nil {
+		http.Error(w, "当前不是 ATM GUI 模式，无法退出桌面程序", http.StatusNotImplemented)
+		return
+	}
+	var body struct {
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+	if s.maint == nil || !s.maint.check(body.Password) {
+		http.Error(w, "维护密码不正确", http.StatusUnauthorized)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "正在退出"})
+	go s.onQuitGUI()
 }
 
 func (s *Server) maintChangePassword(w http.ResponseWriter, r *http.Request) {

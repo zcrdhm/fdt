@@ -23,9 +23,10 @@ import (
 
 // UIOptions configures the embedded ATM HTTP UI.
 type UIOptions struct {
-	EnvPath string // optional explicit fdt.env
-	Listen  string // override ATM_UI_LISTEN; empty → env/default
-	Local   bool   // force 127.0.0.1 host (GUI mode)
+	EnvPath   string // optional explicit fdt.env
+	Listen    string // override ATM_UI_LISTEN; empty → env/default
+	Local     bool   // force 127.0.0.1 host (GUI mode)
+	OnQuitGUI func() // ATM GUI: maint-authenticated process exit
 }
 
 // UIHandle is a running ATM UI server.
@@ -124,6 +125,7 @@ func StartUI(opts UIOptions) (*UIHandle, error) {
 		MaintPasswordFile: maintPassFile,
 		ImportFieldsFile:  importFields,
 		PublicBase:        publicBase,
+		OnQuitGUI:         opts.OnQuitGUI,
 	})
 
 	ln, err := net.Listen("tcp", listen)

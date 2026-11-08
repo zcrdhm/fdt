@@ -28,15 +28,16 @@ import (
 )
 
 func RunIntranet(env map[string]string) error {
-	// Portal UI：LISTEN 可配（默认 8080）。ATM 数据口固定 8081，永不挂页面。
+	// Portal UI：LISTEN（默认 8080）。ATM 数据口：DATA_LISTEN（默认 8081），永不挂页面。
 	listen := apprun.EnvOr(env, "LISTEN", "0.0.0.0:8080")
-	atmListen := "0.0.0.0:8081"
-	if _, p, err := net.SplitHostPort(listen); err == nil && p == "8081" {
-		return fmt.Errorf("intranet: LISTEN 不能使用 8081（已固定为 ATM 数据口 /data /import）")
+	atmListen := apprun.EnvOr(env, "DATA_LISTEN", "0.0.0.0:8081")
+	if sameHostPort(listen, atmListen) {
+		return fmt.Errorf("intranet: LISTEN(%s) 与 DATA_LISTEN(%s) 不能相同", listen, atmListen)
 	}
 	dataDir := apprun.EnvOr(env, "DATA_DIR", "/var/lib/fdt")
 	keys := apprun.EnvOr(env, "KEYS_DIR", "/etc/fdt/keys")
 	tenant := apprun.EnvOr(env, "TENANT", "default")
+	publicBase := strings.TrimRight(apprun.EnvOr(env, "PUBLIC_BASE", apprun.EnvOr(env, "DOMAIN", "")), "/")
 	deviceID := apprun.EnvOr(env, "DEVICE_ID", "atm-01")
 	deviceSecret := apprun.EnvOr(env, "DEVICE_SECRET", "")
 	identityMode := apprun.EnvOr(env, "IDENTITY", "mock")
@@ -107,11 +108,24 @@ func RunIntranet(env map[string]string) error {
 	envFile := apprun.EnvOr(env, "ENV_FILE", filepath.Join(etcDir, "fdt.env"))
 	idp, resolvedMode, err := portal.BuildIdentityProvider(identityMode, ldapFile, env)
 	if err != nil {
-		log.Printf("identity 配置警告: %v；回退 mock", err)
+		wantProd := strings.EqualFold(strings.TrimSpace(identityMode), "ldap") ||
+			strings.EqualFold(strings.TrimSpace(identityMode), "pam") ||
+			strings.EqualFold(resolvedMode, "ldap") ||
+			strings.EqualFold(resolvedMode, "pam")
+		if wantProd || strings.EqualFold(env["ALLOW_MOCK_IDENTITY"], "0") ||
+			strings.EqualFold(env["ALLOW_MOCK_IDENTITY"], "false") {
+			// 已要求 LDAP/PAM / 明确禁止 mock 时，绝不静默回退到弱口令样例账号
+			log.Fatalf("identity 配置失败（拒绝回退 mock）: %v", err)
+		}
+		log.Printf("identity 配置警告: %v；回退 mock（仅联调；生产请 IDENTITY=ldap|pam 或 ALLOW_MOCK_IDENTITY=0）", err)
 		idp = identity.NewMockProvider()
 		resolvedMode = "mock"
 	}
-	log.Printf("identity mode=%s ldapFile=%s formFields=%s", resolvedMode, ldapFile, formFieldsFile)
+	if resolvedMode == "mock" {
+		log.Printf("⚠️ identity=mock：内置弱口令样例账号，禁止生产；请在管理后台切到 ldap 或 pam")
+	}
+	pamService := apprun.EnvOr(env, "PAM_SERVICE", identity.DefaultPAMService)
+	log.Printf("identity mode=%s ldapFile=%s pamService=%s formFields=%s", resolvedMode, ldapFile, pamService, formFieldsFile)
 	if _, err := os.Stat(formFieldsFile); os.IsNotExist(err) {
 		_ = portal.SaveFormFields(formFieldsFile, portal.DefaultFormFields())
 	}
@@ -125,6 +139,7 @@ func RunIntranet(env map[string]string) error {
 		AdminPass:    env["PORTAL_ADMIN_PASSWORD"],
 		AdminUsers:   parseAdminUsers(env["PORTAL_ADMIN_USERS"]),
 		IdentityMode: resolvedMode,
+		PAMService:   pamService,
 		ReleasedRoot: target,
 	}).Router()
 	dataH := datasvc.New(st).Router()
@@ -155,11 +170,11 @@ func RunIntranet(env map[string]string) error {
 	} else {
 		log.Printf("import 禁用: %v", err)
 	}
-	// 8081 明确拒绝页面路径，防止误挂 Portal。
+	// 数据口明确拒绝页面路径，防止误挂 Portal。
 	atmMux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" || r.URL.Path == "/admin" || strings.HasPrefix(r.URL.Path, "/admin/") ||
 			strings.HasPrefix(r.URL.Path, "/app") {
-			http.Error(w, "portal UI is on LISTEN (default :8080), not on ATM data port :8081", http.StatusNotFound)
+			http.Error(w, "portal UI is on LISTEN, not on ATM DATA_LISTEN", http.StatusNotFound)
 			return
 		}
 		http.NotFound(w, r)
@@ -174,7 +189,10 @@ func RunIntranet(env map[string]string) error {
 	srvATM := &http.Server{Addr: atmListen, Handler: atmMux, TLSConfig: tlsCfg}
 	go serveIntranet(srvUI, "portal-ui", listen)
 	go serveIntranet(srvATM, "atm-data", atmListen)
-	log.Printf("intranet: Portal UI %s  |  ATM data fixed %s (/data /import only)", listen, atmListen)
+	if publicBase != "" {
+		log.Printf("intranet: public base %s", publicBase)
+	}
+	log.Printf("intranet: Portal UI %s  |  ATM data %s (/data /import only)", listen, atmListen)
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
@@ -186,16 +204,25 @@ func RunIntranet(env map[string]string) error {
 	return nil
 }
 
+func sameHostPort(a, b string) bool {
+	_, pa, ea := net.SplitHostPort(a)
+	_, pb, eb := net.SplitHostPort(b)
+	if ea != nil || eb != nil {
+		return a == b
+	}
+	return pa == pb
+}
+
 func intranetTLSConfig(env map[string]string, keys string) (*tls.Config, error) {
 	if env["TLS"] != "1" && env["TLS"] != "true" {
 		return nil, nil
 	}
-	tlsCert := filepath.Join(keys, "server.pem")
-	tlsKey := filepath.Join(keys, "server.key")
-	ca := filepath.Join(keys, "device_ca.pem")
+	tlsCert := apprun.FirstNonEmpty(env["TLS_CERT"], filepath.Join(keys, "server.pem"))
+	tlsKey := apprun.FirstNonEmpty(env["TLS_KEY"], filepath.Join(keys, "server.key"))
+	ca := apprun.FirstNonEmpty(env["TLS_CLIENT_CA"], filepath.Join(keys, "device_ca.pem"))
 	cert, err := tls.LoadX509KeyPair(tlsCert, tlsKey)
 	if err != nil {
-		return nil, fmt.Errorf("TLS=1 but server cert missing: %w", err)
+		return nil, fmt.Errorf("TLS=1 but server cert missing (%s / %s): %w", tlsCert, tlsKey, err)
 	}
 	cfg := &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
 	if _, err := os.Stat(ca); err == nil {

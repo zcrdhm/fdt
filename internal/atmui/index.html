@@ -12,11 +12,13 @@
   <div class="maint-bar" id="maint-bar">
     <div class="maint-bar-main">
       <span class="maint-badge">维护模式</span>
-      <span class="hint" id="maint-hint">当前为维护模式。点「退出维护模式」将启动 Chromium 锁屏窗口（--kiosk，可挡 Esc）；仅能通过右下角「维护」+ 密码回到维护界面。</span>
+      <span class="hint" id="maint-hint">当前为维护模式。ATM GUI 下关窗/系统热键会被拦截或自动重开；点「退出维护模式」进入运营锁屏。真正退出程序请用「退出程序」+ 维护密码。</span>
     </div>
     <div class="maint-bar-actions">
       <button type="button" class="primary" id="btn-exit-maint">退出维护模式</button>
+      <button type="button" class="ghost" id="btn-edit-import-fields">编辑导入字段</button>
       <button type="button" class="ghost" id="btn-change-maint-pass">修改维护密码</button>
+      <button type="button" class="ghost danger hidden" id="btn-quit-gui" title="需维护密码；仅 ATM GUI">退出程序</button>
     </div>
   </div>
 
@@ -29,6 +31,7 @@
         <div>
           <div class="brand">FDT ATM</div>
           <div class="sub" id="device-line">摆渡终端</div>
+          <div class="app-footer" id="app-footer">FDT 1.0.1 · © fasteda.cn</div>
         </div>
       </div>
       <div class="tabs">
@@ -74,7 +77,7 @@
 
     <section id="panel-import" class="panel hidden">
       <h2>导入申请 · U 盘 → 隔离区</h2>
-      <p class="hint">插盘选文件 →「生成 QR#1」会<strong>立刻上传到隔离区</strong>，可用飞书扫码后<strong>拔盘离开</strong>。审批通过后到「导入兑付」扫 QR#2 放行。<br>表单字段由本机 <code>import-fields.json</code> 配置。</p>
+      <p class="hint">插盘选文件 →「生成 QR#1」会<strong>立刻上传到隔离区</strong>，可用飞书扫码后<strong>拔盘离开</strong>。审批通过后到「导入兑付」扫 QR#2 放行。<br>表单字段可在<strong>维护模式 → 编辑导入字段</strong>修改（写入本机 <code>import-fields.json</code>）。</p>
       <div id="import-fields"></div>
       <label>从 U 盘选择</label>
       <div class="usb-picker" id="usb-picker">
@@ -151,6 +154,27 @@
       <div class="modal-actions">
         <button type="button" class="ghost" id="maint-pass-cancel">取消</button>
         <button type="button" class="primary" id="maint-pass-ok">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-mask hidden" id="import-fields-modal" role="dialog" aria-modal="true">
+    <div class="modal-card fields-editor-card">
+      <div class="cam-modal-head">
+        <div class="modal-title">编辑导入申请字段</div>
+        <button type="button" class="ghost" id="btn-fields-close">关闭</button>
+      </div>
+      <p class="hint" id="fields-editor-path">配置写入本机 import-fields.json；保存需维护密码。</p>
+      <div id="fields-editor-list" class="fields-editor-list"></div>
+      <div class="actions" style="margin-top:10px">
+        <button type="button" class="ghost" id="btn-fields-add">添加字段</button>
+      </div>
+      <label>维护密码（保存时校验）</label>
+      <input id="fields-editor-pass" type="password" autocomplete="current-password" />
+      <p class="hint" id="fields-editor-err" style="color:var(--bad)"></p>
+      <div class="modal-actions">
+        <button type="button" class="ghost" id="btn-fields-cancel">取消</button>
+        <button type="button" class="primary" id="btn-fields-save">保存</button>
       </div>
     </div>
   </div>

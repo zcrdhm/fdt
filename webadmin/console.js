@@ -205,11 +205,63 @@
     window.open('/console/api/pk-gateway', '_blank');
   };
 
+  async function showGatewayPub() {
+    const box = $('pk-view');
+    const err = $('pk-view-err');
+    const ok = $('pk-copy-ok');
+    err.textContent = '';
+    ok.textContent = '';
+    try {
+      const pem = await api('/console/api/pk-gateway?view=1', {
+        headers: { Accept: 'text/plain' },
+      });
+      $('pk-pem').value = typeof pem === 'string' ? pem.trim() + '\n' : String(pem || '');
+      box.classList.remove('hidden');
+      $('pk-pem').focus();
+      $('pk-pem').select();
+    } catch (e) {
+      box.classList.remove('hidden');
+      err.textContent = e.message || String(e);
+    }
+  }
+
+  $('btn-view-pk').onclick = () => showGatewayPub();
+  $('btn-hide-pk').onclick = () => {
+    $('pk-view').classList.add('hidden');
+    $('pk-copy-ok').textContent = '';
+    $('pk-view-err').textContent = '';
+  };
+  $('btn-copy-pk').onclick = async () => {
+    const text = ($('pk-pem').value || '').trim();
+    const ok = $('pk-copy-ok');
+    const err = $('pk-view-err');
+    err.textContent = '';
+    ok.textContent = '';
+    if (!text) {
+      err.textContent = '暂无内容，请先点「查看密钥内容」';
+      return;
+    }
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text + '\n');
+      } else {
+        $('pk-pem').select();
+        document.execCommand('copy');
+      }
+      ok.textContent = '已复制，可粘贴到 ATM 配置项';
+    } catch (e) {
+      $('pk-pem').select();
+      err.textContent = '自动复制失败，请手动 Ctrl+C / ⌘C';
+    }
+  };
+
   $('btn-regen').onclick = async () => {
     if (!confirm('重新生成后旧 ATM 上的 pk_gateway 将失效，确认？')) return;
     const t = await api('/console/api/regen-gateway', { method: 'POST' });
     fill(t);
-    alert('已重新生成，请重新下载 pk_gateway.pem');
+    $('pk-view').classList.add('hidden');
+    $('pk-pem').value = '';
+    alert('已重新生成，请重新下载或「查看密钥内容」后更新所有 ATM');
   };
 
   $('btn-profile').onclick = async () => {

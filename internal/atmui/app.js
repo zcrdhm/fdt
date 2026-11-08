@@ -92,7 +92,12 @@
   }
 
   function isPassField(el) {
-    return el && (el.id === 'maint-pass-input' || el.id === 'maint-pass-new' || el.id === 'maint-pass-new2');
+    return el && (
+      el.id === 'maint-pass-input' ||
+      el.id === 'maint-pass-new' ||
+      el.id === 'maint-pass-new2' ||
+      el.id === 'fields-editor-pass'
+    );
   }
 
   /** 全屏运营态拦截浏览器/系统常用退出快捷键（无法拦截 Ctrl+Alt+Del / 系统 Win 键，需配合 kiosk 浏览器）。 */
@@ -158,13 +163,29 @@
     $('maint-pass-new').value = '';
     $('maint-pass-new2').value = '';
     const changing = maintPassMode === 'change';
-    $('maint-pass-title').textContent = changing ? '修改维护密码' : '进入维护模式';
+    const quitting = maintPassMode === 'quit';
+    $('maint-pass-title').textContent = changing
+      ? '修改维护密码'
+      : (quitting ? '退出 ATM 程序' : '进入维护模式');
     $('maint-pass-hint').textContent = changing
       ? '请输入当前维护密码，并设置新密码（至少 4 位）。'
-      : '全屏运营中已屏蔽 Esc/F11 等快捷键。输入维护密码后才能退出全屏。';
+      : (quitting
+        ? '请输入维护密码以退出程序。关窗或系统热键无法真正退出。'
+        : '全屏运营中已屏蔽 Esc/F11 等快捷键。输入维护密码后才能退出全屏。');
     $('maint-pass-extra').classList.toggle('hidden', !changing);
     $('maint-pass-modal').classList.remove('hidden');
     $('maint-pass-input').focus();
+  }
+
+  async function quitGUIWithPassword() {
+    const pw = ($('maint-pass-input').value || '');
+    try {
+      await api('/api/maint/quit', { method: 'POST', body: JSON.stringify({ password: pw }) });
+      closeMaintPassModal();
+      await showModal('正在退出', '程序即将关闭。', 'ok');
+    } catch (e) {
+      $('maint-pass-err').textContent = e.message || String(e);
+    }
   }
 
   function closeMaintPassModal() {
@@ -240,12 +261,178 @@
     }
   }
 
+  let fieldsEditorDraft = [];
+  let fieldsEditorVersion = 1;
+
+  function closeFieldsEditor() {
+    const m = $('import-fields-modal');
+    if (m) m.classList.add('hidden');
+  }
+
+  function renderFieldsEditor() {
+    const list = $('fields-editor-list');
+    if (!list) return;
+    const types = ['text', 'textarea', 'select', 'number'];
+    list.innerHTML = fieldsEditorDraft.map((f, idx) => {
+      const builtin = !!f.builtin || f.key === 'reason' || f.key === 'cls';
+      const opts = (f.options || []).join('\n');
+      const typeOpts = types.map((t) =>
+        '<option value="' + t + '"' + (f.type === t ? ' selected' : '') + '>' + t + '</option>'
+      ).join('');
+      return (
+        '<div class="field-edit-card" data-idx="' + idx + '">' +
+          '<div class="field-edit-head">' +
+            '<span class="key">' + escAttr(f.key || '(新字段)') + (builtin ? ' · 内置' : '') + '</span>' +
+            (builtin ? '' : '<button type="button" class="ghost nm" data-fields-del="' + idx + '">删除</button>') +
+          '</div>' +
+          '<div class="field-edit-grid">' +
+            (builtin
+              ? '<div><label>key</label><input value="' + escAttr(f.key) + '" disabled /></div>'
+              : '<div><label>key *</label><input data-fe="key" data-idx="' + idx + '" value="' + escAttr(f.key || '') + '" placeholder="英文小写，如 receiver" /></div>') +
+            '<div><label>标签 *</label><input data-fe="label" data-idx="' + idx + '" value="' + escAttr(f.label || '') + '" /></div>' +
+            '<div><label>类型</label><select data-fe="type" data-idx="' + idx + '">' + typeOpts + '</select></div>' +
+            '<div><label>默认值</label><input data-fe="default" data-idx="' + idx + '" value="' + escAttr(f.default || '') + '" /></div>' +
+            '<div class="span2"><label>提示</label><input data-fe="hint" data-idx="' + idx + '" value="' + escAttr(f.hint || '') + '" /></div>' +
+            '<div class="span2"><label>选项（select：每行一项，可用 value|显示名）</label>' +
+              '<textarea data-fe="options" data-idx="' + idx + '" rows="2"' + (f.type === 'select' ? '' : ' disabled') + '>' +
+              escAttr(opts) + '</textarea></div>' +
+          '</div>' +
+          '<div class="row-checks">' +
+            '<label><input type="checkbox" data-fe="required" data-idx="' + idx + '"' + (f.required ? ' checked' : '') + ' /> 必填</label>' +
+            '<label><input type="checkbox" data-fe="enabled" data-idx="' + idx + '"' + (f.enabled !== false ? ' checked' : '') + ' /> 启用</label>' +
+            '<label>排序 <input type="number" data-fe="order" data-idx="' + idx + '" value="' + (f.order || (idx + 1) * 10) + '" style="width:72px;padding:6px" /></label>' +
+          '</div>' +
+        '</div>'
+      );
+    }).join('');
+
+    list.querySelectorAll('[data-fe]').forEach((el) => {
+      const apply = () => {
+        const i = Number(el.getAttribute('data-idx'));
+        const fe = el.getAttribute('data-fe');
+        if (!fieldsEditorDraft[i]) return;
+        if (fe === 'required' || fe === 'enabled') {
+          fieldsEditorDraft[i][fe] = !!el.checked;
+        } else if (fe === 'order') {
+          fieldsEditorDraft[i].order = Number(el.value) || 0;
+        } else if (fe === 'options') {
+          fieldsEditorDraft[i].options = String(el.value || '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+        } else if (fe === 'type') {
+          fieldsEditorDraft[i].type = el.value;
+          renderFieldsEditor();
+        } else {
+          fieldsEditorDraft[i][fe] = el.value;
+        }
+      };
+      el.addEventListener('change', apply);
+      el.addEventListener('input', apply);
+    });
+    list.querySelectorAll('[data-fields-del]').forEach((btn) => {
+      btn.onclick = () => {
+        const i = Number(btn.getAttribute('data-fields-del'));
+        fieldsEditorDraft.splice(i, 1);
+        renderFieldsEditor();
+      };
+    });
+  }
+
+  async function openFieldsEditor() {
+    const err = $('fields-editor-err');
+    if (err) err.textContent = '';
+    if ($('fields-editor-pass')) $('fields-editor-pass').value = '';
+    try {
+      const d = await api('/api/maint/import-fields');
+      if (d.editable === false) {
+        await showModal('无法编辑', '未配置 ATM_IMPORT_FIELDS，无法写入字段文件。', 'warn');
+        return;
+      }
+      fieldsEditorVersion = d.version || 1;
+      fieldsEditorDraft = (d.fields || []).map((f) => ({
+        key: f.key || '',
+        label: f.label || '',
+        type: f.type || 'text',
+        required: !!f.required,
+        enabled: f.enabled !== false,
+        default: f.default || '',
+        hint: f.hint || '',
+        order: f.order || 0,
+        options: Array.isArray(f.options) ? f.options.slice() : [],
+        builtin: !!f.builtin || f.key === 'reason' || f.key === 'cls',
+      }));
+      const pathEl = $('fields-editor-path');
+      if (pathEl) {
+        pathEl.textContent = '保存到：' + (d.path || 'import-fields.json') + '（需维护密码）';
+      }
+      renderFieldsEditor();
+      $('import-fields-modal').classList.remove('hidden');
+    } catch (e) {
+      await showModal('加载失败', e.message || String(e), 'bad');
+    }
+  }
+
+  async function saveFieldsEditor() {
+    const err = $('fields-editor-err');
+    if (err) err.textContent = '';
+    const password = ($('fields-editor-pass') && $('fields-editor-pass').value) || '';
+    if (!password) {
+      if (err) err.textContent = '请输入维护密码';
+      return;
+    }
+    const fields = fieldsEditorDraft.map((f, i) => ({
+      key: String(f.key || '').trim(),
+      label: String(f.label || '').trim(),
+      type: f.type || 'text',
+      required: !!f.required,
+      enabled: f.enabled !== false,
+      default: f.default || '',
+      hint: f.hint || '',
+      order: Number(f.order) || (i + 1) * 10,
+      options: f.type === 'select' ? (f.options || []) : undefined,
+      builtin: !!f.builtin || f.key === 'reason' || f.key === 'cls',
+    }));
+    try {
+      await api('/api/maint/import-fields', {
+        method: 'POST',
+        body: JSON.stringify({ password, version: fieldsEditorVersion, fields }),
+      });
+      closeFieldsEditor();
+      await loadImportFields();
+      await showModal('已保存', '导入申请字段已更新，表单已刷新。', 'ok');
+    } catch (e) {
+      if (err) err.textContent = e.message || String(e);
+    }
+  }
+
   $('btn-exit-maint').onclick = () => exitMaintenance();
   $('btn-enter-maint').onclick = () => openMaintPassModal('unlock');
   $('btn-change-maint-pass').onclick = () => openMaintPassModal('change');
+  if ($('btn-edit-import-fields')) {
+    $('btn-edit-import-fields').onclick = () => openFieldsEditor();
+  }
+  if ($('btn-quit-gui')) {
+    $('btn-quit-gui').onclick = () => openMaintPassModal('quit');
+  }
+  if ($('btn-fields-add')) {
+    $('btn-fields-add').onclick = () => {
+      fieldsEditorDraft.push({
+        key: '', label: '', type: 'text', required: false, enabled: true,
+        default: '', hint: '', order: (fieldsEditorDraft.length + 1) * 10, options: [], builtin: false,
+      });
+      renderFieldsEditor();
+    };
+  }
+  if ($('btn-fields-save')) $('btn-fields-save').onclick = () => saveFieldsEditor();
+  if ($('btn-fields-cancel')) $('btn-fields-cancel').onclick = closeFieldsEditor;
+  if ($('btn-fields-close')) $('btn-fields-close').onclick = closeFieldsEditor;
+  if ($('import-fields-modal')) {
+    $('import-fields-modal').onclick = (e) => {
+      if (e.target === $('import-fields-modal')) closeFieldsEditor();
+    };
+  }
   $('maint-pass-cancel').onclick = closeMaintPassModal;
   $('maint-pass-ok').onclick = () => {
     if (maintPassMode === 'change') changeMaintPassword();
+    else if (maintPassMode === 'quit') quitGUIWithPassword();
     else enterMaintenanceWithPassword();
   };
   ['maint-pass-input', 'maint-pass-new', 'maint-pass-new2'].forEach((id) => {
@@ -386,6 +573,12 @@
   }
 
   function applyStatus(s) {
+    const foot = $('app-footer');
+    if (foot) {
+      const ver = s.version || '1.0.1';
+      const copy = s.copyright || '© fasteda.cn';
+      foot.textContent = 'FDT ' + ver + ' · ' + copy;
+    }
     $('device-line').textContent = '设备 ' + (s.deviceId || 'atm') + (s.camera ? ' · 摄像头 ' + s.camera : '');
     // ERROR 已由弹窗提示；状态栏按 U 盘情况显示，避免常驻「出错」误导。
     let st = s.state;
@@ -428,6 +621,8 @@
     renderRedeemProgress(s);
     renderImportXferProgress(s);
     renderImportRedeemProgress(s);
+    const quitBtn = $('btn-quit-gui');
+    if (quitBtn) quitBtn.classList.toggle('hidden', !s.guiQuit);
   }
 
   function fmtRate(bps) {
@@ -967,7 +1162,8 @@
       const hint = f.hint ? '<div class="hint" style="margin:0 0 6px">' + escAttr(f.hint) + '</div>' : '';
       let ctrl = '';
       if (f.type === 'textarea') {
-        ctrl = '<textarea id="' + id + '" rows="3" data-imp-key="' + escAttr(f.key) + '">' +
+        const rows = f.key === 'reason' ? 4 : 3;
+        ctrl = '<textarea id="' + id + '" rows="' + rows + '" data-imp-key="' + escAttr(f.key) + '">' +
           escAttr(f.default || '') + '</textarea>';
       } else if (f.type === 'select') {
         const opts = (f.options || []).map((o) => {
@@ -999,7 +1195,7 @@
       renderImportFields(d.fields || []);
     } catch (e) {
       renderImportFields([
-        { key: 'reason', label: '事由', type: 'text', required: true, default: '导入资料' },
+        { key: 'reason', label: '事由', type: 'textarea', required: true, default: '导入资料' },
         { key: 'cls', label: '密级', type: 'select', required: true, default: 'confidential',
           options: ['internal', 'confidential', 'secret'] },
       ]);

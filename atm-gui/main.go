@@ -1,5 +1,5 @@
 // Command fdt-atm-gui is a standalone ATM desktop app for standard (non-admin) users:
-// first run → setup wizard → write user-local fdt.env; later runs start service + window.
+// first run → setup wizard → write user-local fdt.env; later runs start service + kiosk window.
 package main
 
 import (
@@ -12,13 +12,19 @@ import (
 	"strings"
 
 	"fdt/internal/apprun/atmapp"
+	"fdt/internal/buildinfo"
 )
 
 func main() {
+	showVer := flag.Bool("version", false, "打印版本并退出")
 	envFlag := flag.String("env", "", "ATM 配置文件（默认: 用户目录 FDT-ATM/fdt.env）")
 	listen := flag.String("listen", "", "覆盖 ATM_UI_LISTEN")
 	forceSetup := flag.Bool("setup", false, "强制打开首次配置向导")
 	flag.Parse()
+	if *showVer {
+		fmt.Println(buildinfo.Summary("fdt-atm-gui"))
+		return
+	}
 
 	unlock, err := acquireSingleInstance()
 	if err != nil {
@@ -44,6 +50,9 @@ func main() {
 		EnvPath: envPath,
 		Listen:  *listen,
 		Local:   true,
+		OnQuitGUI: func() {
+			requestQuit()
+		},
 	})
 	if err != nil {
 		fatal("启动 ATM 服务失败: %v\n  可运行: %s -setup  重新配置", err, selfName())
@@ -51,10 +60,11 @@ func main() {
 	defer func() { _ = h.Shutdown(context.Background()) }()
 
 	uiURL := withQuery(h.URL+"/", "run", "1")
-	fmt.Printf("FDT ATM GUI\n  服务 %s\n  设备 %s\n  配置 %s\n  数据目录 %s\n", h.URL, h.DeviceID, h.EnvPath, userATMRoot())
-	fmt.Println("  维护密码可在界面「维护模式」中修改；改密后无需管理员权限。")
+	uiURL = withQuery(uiURL, "kiosk", "1")
+	fmt.Printf("FDT ATM GUI（防退出）\n  服务 %s\n  设备 %s\n  配置 %s\n  数据目录 %s\n", h.URL, h.DeviceID, h.EnvPath, userATMRoot())
+	fmt.Println("  退出：维护模式 →「退出程序」→ 输入维护密码。关窗/热键会被拦截或自动重开。")
 
-	if err := openWindow("FDT ATM", uiURL); err != nil {
+	if err := openKioskWindow("FDT ATM", uiURL); err != nil {
 		fatal("打开窗口失败: %v", err)
 	}
 }
@@ -93,7 +103,6 @@ func profileDir() string {
 		_ = os.MkdirAll(p, 0o755)
 		return p
 	}
-	// Keep browser/WebView profile under the same user ATM home.
 	d := filepath.Join(userATMRoot(), "gui-profile")
 	_ = os.MkdirAll(d, 0o755)
 	return d

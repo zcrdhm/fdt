@@ -23,28 +23,42 @@
     })[c]);
   }
 
+  function applyVersionFooter(data) {
+    const ver = (data && data.version) || '1.0.1';
+    const copy = (data && data.copyright) || '© fasteda.cn';
+    const text = 'FDT ' + ver + ' · ' + copy;
+    ['login-footer', 'app-footer'].forEach((id) => {
+      const el = $(id);
+      if (el) el.textContent = text;
+    });
+  }
+
   function showLogin() {
+    applyVersionFooter(me);
     $('view-login').classList.remove('hidden');
     $('view-app').classList.add('hidden');
   }
 
-  const PANELS = ['imports', 'history', 'fields', 'ldap', 'password'];
+  const PANELS = ['imports', 'history', 'fields', 'identity', 'password'];
 
   function panelFromHash() {
-    const h = (location.hash || '').replace(/^#\/?/, '');
+    let h = (location.hash || '').replace(/^#\/?/, '');
+    if (h === 'ldap') h = 'identity'; // 旧书签兼容
     return PANELS.indexOf(h) >= 0 ? h : 'imports';
   }
 
   function showApp() {
     $('view-login').classList.add('hidden');
     $('view-app').classList.remove('hidden');
+    applyVersionFooter(me);
     $('who-line').textContent = (me.name || '本地管理员') + ' · ' + (me.account || 'admin');
-    $('who-sub').textContent = '本地管理员会话 · 可查看全部记录并配置 LDAP';
+    $('who-sub').textContent = '本地管理员会话 · 可查看全部记录并配置身份认证';
     $('mode-badge').textContent = me.identityMode || 'admin';
     showPanel(panelFromHash());
   }
 
   function showPanel(name, opts) {
+    if (name === 'ldap') name = 'identity';
     if (PANELS.indexOf(name) < 0) name = 'imports';
     PANELS.forEach((n) => {
       const panel = $('panel-' + n);
@@ -58,7 +72,7 @@
     if (name === 'imports') loadImports();
     if (name === 'history') loadHistory();
     if (name === 'fields') loadFields();
-    if (name === 'ldap') loadLDAP();
+    if (name === 'identity') loadIdentity();
     if (name === 'password') {
       $('pwd-err').textContent = '';
       $('pwd-ok').textContent = '';
@@ -424,31 +438,82 @@
     }
   }
 
-  async function loadLDAP() {
+  let lastIdentityMode = 'none';
+  let pamAvailable = true;
+
+  // 域控（AD）常用默认值：空配置时写入可编辑的真实值，不是 placeholder。
+  const LDAP_AD_DEFAULTS = {
+    searchFilter: '(sAMAccountName=%s)',
+    attrName: 'displayName',
+    attrID: 'employeeID',
+    attrDept: 'department',
+    attrMail: 'mail',
+  };
+
+  function setIdentityMode(mode, opts) {
+    const m = mode || 'none';
+    $('identity-mode').value = m;
+    document.querySelectorAll('.id-mode-card').forEach((el) => {
+      el.classList.toggle('on', el.getAttribute('data-mode') === m);
+    });
+    ['ldap', 'pam', 'none', 'mock'].forEach((n) => {
+      const panel = $('id-panel-' + n);
+      if (panel) panel.classList.toggle('hidden', n !== m);
+    });
+    const hint = $('identity-mode-hint');
+    const testRow = $('id-test-row');
+    const testBtn = $('btn-ldap-test');
+    if (hint) {
+      if (m === 'ldap') hint.textContent = '使用 LDAP/AD 认证申请人；保存后 IDENTITY=ldap。';
+      else if (m === 'pam') hint.textContent = '使用本机 PAM 认证；保存后 IDENTITY=pam，走 /etc/pam.d 服务栈。';
+      else if (m === 'none') hint.textContent = '关闭目录认证（IDENTITY=none）。不会回退到 mock。';
+      else hint.textContent = '⚠️ mock 含弱口令样例账号，仅限离线联调；生产请选 LDAP 或本机 PAM。';
+    }
+    if (testRow) testRow.classList.toggle('hidden', m === 'none' || m === 'mock');
+    if (testBtn) testBtn.classList.toggle('hidden', m === 'none' || m === 'mock');
+    const pamWarn = $('pam-unavailable');
+    if (pamWarn) pamWarn.classList.toggle('hidden', !(m === 'pam' && !pamAvailable));
+    if (!(opts && opts.skipConfirm) && m === 'mock' && (lastIdentityMode === 'ldap' || lastIdentityMode === 'pam')) {
+      if (!confirm('当前已是生产身份源。切换到 mock 会启用弱口令样例账号，生产环境禁止。确定继续？')) {
+        setIdentityMode(lastIdentityMode, { skipConfirm: true });
+      }
+    }
+  }
+
+  async function loadIdentity() {
     $('ldap-err').textContent = '';
+    $('ldap-ok').textContent = '';
     try {
       const d = await api('/api/settings/ldap');
       const L = d.ldap || {};
-      $('ldap-enabled').checked = !!L.enabled;
+      const P = d.pam || {};
+      pamAvailable = P.available !== false;
+      const mode = d.identityMode || (L.enabled ? 'ldap' : 'none');
+      lastIdentityMode = mode;
+      $('pam-service').value = P.service || 'password-auth';
       $('ldap-url').value = L.url || '';
       $('ldap-starttls').checked = !!L.startTLS;
       $('ldap-insecure').checked = !!L.insecureSkipVerify;
       $('ldap-base').value = L.searchBase || '';
       $('ldap-bind-dn').value = L.serviceBindDN || '';
-      $('ldap-filter').value = L.searchFilter || '';
-      $('ldap-attr-name').value = L.attrName || '';
-      $('ldap-attr-id').value = L.attrID || '';
-      $('ldap-attr-dept').value = L.attrDept || '';
-      $('ldap-attr-mail').value = L.attrMail || '';
+      $('ldap-filter').value = L.searchFilter || LDAP_AD_DEFAULTS.searchFilter;
+      $('ldap-attr-name').value = L.attrName || LDAP_AD_DEFAULTS.attrName;
+      $('ldap-attr-id').value = L.attrID || LDAP_AD_DEFAULTS.attrID;
+      $('ldap-attr-dept').value = L.attrDept || LDAP_AD_DEFAULTS.attrDept;
+      $('ldap-attr-mail').value = L.attrMail || LDAP_AD_DEFAULTS.attrMail;
       if (L.hasServicePassword) $('ldap-bind-pass').placeholder = '已保存（留空不改）';
+      setIdentityMode(mode, { skipConfirm: true });
     } catch (e) {
       $('ldap-err').textContent = e.message || String(e);
     }
   }
 
-  function ldapBody() {
+  function identityBody() {
+    const identityMode = $('identity-mode').value;
     return {
-      enabled: $('ldap-enabled').checked,
+      identityMode,
+      pamService: $('pam-service').value.trim() || 'password-auth',
+      enabled: identityMode === 'ldap',
       url: $('ldap-url').value.trim(),
       startTLS: $('ldap-starttls').checked,
       insecureSkipVerify: $('ldap-insecure').checked,
@@ -466,6 +531,7 @@
   async function boot() {
     try {
       me = await api('/api/me');
+      applyVersionFooter(me);
       if (me.authenticated && me.canManageSettings) showApp();
       else showLogin();
     } catch (_) {
@@ -505,12 +571,15 @@
   $('btn-tab-imports').onclick = () => showPanel('imports');
   $('btn-tab-history').onclick = () => showPanel('history');
   $('btn-tab-fields').onclick = () => showPanel('fields');
-  $('btn-tab-ldap').onclick = () => showPanel('ldap');
+  $('btn-tab-identity').onclick = () => showPanel('identity');
   $('btn-tab-password').onclick = () => showPanel('password');
   $('btn-imports-refresh').onclick = () => loadImports();
   window.addEventListener('hashchange', () => {
     if ($('view-app').classList.contains('hidden')) return;
     showPanel(panelFromHash(), { skipHash: true });
+  });
+  document.querySelectorAll('.id-mode-card').forEach((el) => {
+    el.onclick = () => setIdentityMode(el.getAttribute('data-mode'));
   });
 
   $('btn-pwd-save').onclick = async () => {
@@ -560,9 +629,21 @@
     $('ldap-err').textContent = '';
     $('ldap-ok').textContent = '';
     try {
-      const r = await api('/api/settings/ldap', { method: 'POST', body: JSON.stringify(ldapBody()) });
+      const body = identityBody();
+      if (body.identityMode === 'mock' && (lastIdentityMode === 'ldap' || lastIdentityMode === 'pam')) {
+        if (!confirm('将切回 mock（联调样例）。生产请选 LDAP 或本机 PAM。确定保存？')) return;
+      }
+      if (body.identityMode === 'pam' && !pamAvailable) {
+        throw new Error('当前二进制不支持 PAM，请使用 Linux 版 Portal（已链接 libpam）');
+      }
+      const r = await api('/api/settings/ldap', { method: 'POST', body: JSON.stringify(body) });
       $('ldap-ok').textContent = r.message || '已保存';
+      lastIdentityMode = r.identityMode || body.identityMode;
+      if (r.pam && r.pam.available === false) pamAvailable = false;
+      setIdentityMode(lastIdentityMode, { skipConfirm: true });
       $('ldap-bind-pass').value = '';
+      if (me) me.identityMode = lastIdentityMode;
+      if ($('mode-badge')) $('mode-badge').textContent = lastIdentityMode;
     } catch (e) {
       $('ldap-err').textContent = e.message || String(e);
     }
@@ -573,10 +654,13 @@
     $('ldap-ok').textContent = '';
     $('ldap-test-out').classList.add('hidden');
     try {
-      const body = Object.assign(ldapBody(), {
+      const body = Object.assign(identityBody(), {
         account: $('ldap-test-user').value.trim(),
         password: $('ldap-test-pass').value,
       });
+      if (body.identityMode !== 'ldap' && body.identityMode !== 'pam') {
+        throw new Error('请先选择 LDAP 或本机 PAM 再测试');
+      }
       const r = await api('/api/settings/ldap/test', { method: 'POST', body: JSON.stringify(body) });
       $('ldap-ok').textContent = r.message || '测试成功';
       if (r.user) {
